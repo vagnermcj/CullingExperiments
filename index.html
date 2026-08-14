@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Tiles Viewer</title>
+  </head>
+  <body>
+    <div id="app">
+      <div class="viewer-shell">
+        <canvas id="viewer-canvas" aria-label="3D tile viewer"></canvas>
+        <div class="url-widget" id="url-widget">
+          <label class="url-label" for="tileset-url">Tileset URL</label>
+          <div class="url-row">
+            <input
+              class="url-input"
+              id="tileset-url"
+              type="url"
+              placeholder="https://…/tileset.json"
+              autocomplete="off"
+              spellcheck="false"
+            />
+            <button class="url-load-btn" id="url-load-btn" type="button">Load</button>
+          </div>
+        </div>
+        <div id="stats-host" class="stats-host" aria-label="Performance statistics"></div>
+        <div id="leva-host" class="leva-host"></div>
+      </div>
+    </div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

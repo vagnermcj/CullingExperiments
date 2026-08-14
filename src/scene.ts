@@ -43,7 +43,8 @@ export const initScene = (canvas: HTMLCanvasElement): SceneSetup => {
   scene.add(sun)
 
   const params = new URLSearchParams(window.location.search)
-  const tilesetUrl = params.get('tileset') ?? '/data/add_spheres/tileset.json'
+  const tilesetUrl =
+    params.get('tileset') ?? `${import.meta.env.BASE_URL}data/add_spheres/tileset.json`
 
   const tiles = createTilesRenderer(tilesetUrl, camera, renderer)
   scene.add(tiles.group)

@@ -7,7 +7,8 @@ export const initUrlWidget = (onLoad: (url: string) => void): void => {
   }
 
   const params = new URLSearchParams(window.location.search)
-  input.value = params.get('tileset') ?? '/data/add_spheres/tileset.json'
+  input.value =
+    params.get('tileset') ?? `${import.meta.env.BASE_URL}data/add_spheres/tileset.json`
 
   const load = () => {
     const url = input.value.trim()

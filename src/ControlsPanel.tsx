@@ -22,10 +22,10 @@ export const ControlsPanel = ({ tilesRef, statsRef }: ControlsPanelProps) => {
   const [tilesValues, setTiles] = useControls(
     'Tiles',
     () => ({
-      errorTarget: { value: 800, min: 0, step: 0.5 },
+      errorTarget: { value: 500, min: 0, step: 0.5 },
       maxTilesProcessed: { value: 250, min: 1, step: 10 },
       displayActiveTiles: false,
-      displayBBox: false,
+      displayBBox: true,
     }),
     [],
   )

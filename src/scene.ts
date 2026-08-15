@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import { TilesRenderer } from '3d-tiles-renderer'
-import { DebugTilesPlugin, ReorientationPlugin } from '3d-tiles-renderer/plugins'
+import { DebugTilesPlugin } from '3d-tiles-renderer/plugins'
 import type { SceneSetup } from './types'
 
 export const createTilesRenderer = (
@@ -9,8 +9,6 @@ export const createTilesRenderer = (
   renderer: THREE.WebGLRenderer,
 ): TilesRenderer => {
   const tiles = new TilesRenderer(url)
-  // Recenter and orient georeferenced tilesets near the origin to avoid precision issues.
-  tiles.registerPlugin(new ReorientationPlugin())
   // Debug plugin: registered but disabled by default; Leva panel toggles it.
   tiles.registerPlugin(new DebugTilesPlugin({ enabled: false }))
   tiles.setCamera(camera)
@@ -32,7 +30,7 @@ export const initScene = (canvas: HTMLCanvasElement): SceneSetup => {
   scene.background = new THREE.Color('#0a1524')
 
   const camera = new THREE.PerspectiveCamera(55, 1, 0.1, 10000)
-  camera.position.set(20, 15, 20)
+  camera.position.set(10, 10, 10)
   camera.lookAt(0, 0, 0)
 
   const hemi = new THREE.HemisphereLight('#d7f3ff', '#123459', 0.9)

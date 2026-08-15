@@ -35,11 +35,6 @@ setupResizeHandler({
 const controls = createControls({ camera, domElement: renderer.domElement })
 
 const clock = new THREE.Clock()
-const tilesBounds = new THREE.Box3()
-const tilesSphere = new THREE.Sphere()
-const cameraOffsetDirection = new THREE.Vector3()
-const tileCenter = new THREE.Vector3()
-
 let tiles: TilesRenderer = initialTiles
 
 // three.js Stats panel
@@ -69,52 +64,10 @@ const levaHost = document.querySelector<HTMLDivElement>('#leva-host') ?? documen
 const levaRoot = createRoot(levaHost)
 levaRoot.render(<ControlsPanel tilesRef={tilesRef} statsRef={statsRef} />)
 
-const onRootLoaded = () => {
-  let fitRadius = 1
-  let hasCenter = false
-
-  if (tiles.getBoundingSphere(tilesSphere)) {
-    tileCenter.copy(tilesSphere.center)
-    fitRadius = Math.max(tilesSphere.radius, 1)
-    hasCenter = true
-  } else if (tiles.getBoundingBox(tilesBounds)) {
-    tilesBounds.getCenter(tileCenter)
-    fitRadius = Math.max(tilesBounds.getSize(cameraOffsetDirection).length() * 0.5, 1)
-    hasCenter = true
-  }
-
-  if (!hasCenter) {
-    return
-  }
-
-  cameraOffsetDirection.copy(camera.position).sub(tileCenter)
-
-  if (cameraOffsetDirection.lengthSq() < 1e-6) {
-    cameraOffsetDirection.set(1, 0.8, 1)
-  }
-
-  cameraOffsetDirection.normalize()
-
-  const fitDistance = fitRadius / Math.sin(THREE.MathUtils.degToRad(camera.fov * 0.5))
-  camera.position.copy(tileCenter).addScaledVector(cameraOffsetDirection, fitDistance * 1.15)
-  camera.lookAt(tileCenter)
-  camera.near = Math.max(fitRadius * 0.0005, 0.01)
-  camera.far = Math.max(fitRadius * 400, camera.near + 1000)
-  camera.updateProjectionMatrix()
-  camera.updateMatrixWorld(true)
-
-  controls.movementSpeed = Math.max(fitRadius * 0.75, 5)
-}
-
-tiles.addEventListener('load-root-tileset', onRootLoaded)
-if (tiles.root) {
-  onRootLoaded()
-}
 
 initUrlWidget((url: string) => {
   disposeTilesRenderer(tiles, scene)
   tiles = createTilesRenderer(url, camera, renderer)
-  tiles.addEventListener('load-root-tileset', onRootLoaded)
   scene.add(tiles.group)
 
   // Pass a new ref object so the React island re-syncs its defaults.

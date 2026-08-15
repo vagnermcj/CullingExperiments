@@ -2,7 +2,7 @@
   "asset": {
     "version": "1.1"
   },
-  "geometricError": 10.0,
+  "geometricError": 5.0,
   "root": {
     "refine": "ADD",
     "boundingVolume": {

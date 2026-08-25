@@ -7,4 +7,6 @@ export interface SceneSetup {
   scene: import('three').Scene
   camera: import('three').PerspectiveCamera
   tiles: import('3d-tiles-renderer').TilesRenderer
+  topCamera: import('three').OrthographicCamera
+  cameraHelper: import('three').CameraHelper
 }

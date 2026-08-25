@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 import { Leva, useControls } from 'leva'
 import type { TilesRenderer } from '3d-tiles-renderer'
 import type { DebugTilesPlugin } from '3d-tiles-renderer/plugins'
+import type { OrthographicCamera } from 'three'
 
 const GIGABYTE = 2 ** 30
 
@@ -15,10 +16,17 @@ interface StatsSnapshot {
 interface ControlsPanelProps {
   tilesRef: { current: TilesRenderer | null }
   statsRef: { current: StatsSnapshot }
+  topCameraRef: { current: OrthographicCamera | null }
+  topViewConfigRef: { current: { enabled: boolean } }
 }
 
 
-export const ControlsPanel = ({ tilesRef, statsRef }: ControlsPanelProps) => {
+export const ControlsPanel = ({
+  tilesRef,
+  statsRef,
+  topCameraRef,
+  topViewConfigRef,
+}: ControlsPanelProps) => {
   const [tilesValues, setTiles] = useControls(
     'Tiles',
     () => ({
@@ -144,6 +152,24 @@ export const ControlsPanel = ({ tilesRef, statsRef }: ControlsPanelProps) => {
     rafId = requestAnimationFrame(update)
     return () => cancelAnimationFrame(rafId)
   }, [setStats, statsRef])
+
+  const [topViewValues] = useControls('Top View', () => ({
+    enabled: true,
+    height: { value: 40, min: 5, max: 200, step: 1 },
+    extent: { value: 8, min: 1, max: 50, step: 1 },
+  }))
+
+  useEffect(() => {
+    topViewConfigRef.current.enabled = topViewValues.enabled
+    const cam = topCameraRef.current
+    if (!cam) return
+    cam.position.y = topViewValues.height
+    cam.left = -topViewValues.extent
+    cam.right = topViewValues.extent
+    cam.top = topViewValues.extent
+    cam.bottom = -topViewValues.extent
+    cam.updateProjectionMatrix()
+  }, [topViewValues, topCameraRef, topViewConfigRef])
 
   return (
     <Leva

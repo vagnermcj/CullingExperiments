@@ -199,3 +199,15 @@ h1 {
     max-height: calc(100% - 1.6rem);
   }
 }
+
+.minimap-frame {
+  position: absolute;
+  right: 20px;
+  bottom: 20px;
+  width: 220px;
+  height: 220px;
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
+  pointer-events: none;
+  box-shadow: 0 8px 30px rgba(6, 16, 32, 0.45);
+}

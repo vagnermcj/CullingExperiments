@@ -24,7 +24,7 @@ if (!app) {
 }
 
 const hud = initHud()
-const { renderer, scene, camera, tiles: initialTiles } = initScene(hud.canvas)
+const { renderer, scene, camera, tiles: initialTiles, topCamera, cameraHelper } = initScene(hud.canvas)
 
 setupResizeHandler({
   container: app,
@@ -59,10 +59,22 @@ const statsRef: { current: StatsSnapshot } = {
   },
 }
 
+
+const topViewConfigRef: { current: { enabled: boolean } } = { current: { enabled: true } }
+const topCameraRef = { current: topCamera }
+const minimapFrame = document.querySelector<HTMLDivElement>('#minimap-frame')
+
 let tilesRef = { current: tiles }
 const levaHost = document.querySelector<HTMLDivElement>('#leva-host') ?? document.body
 const levaRoot = createRoot(levaHost)
-levaRoot.render(<ControlsPanel tilesRef={tilesRef} statsRef={statsRef} />)
+levaRoot.render(
+  <ControlsPanel
+    tilesRef={tilesRef}
+    statsRef={statsRef}
+    topCameraRef={topCameraRef}
+    topViewConfigRef={topViewConfigRef}
+  />,
+)
 
 
 initUrlWidget((url: string) => {
@@ -70,9 +82,15 @@ initUrlWidget((url: string) => {
   tiles = createTilesRenderer(url, camera, renderer)
   scene.add(tiles.group)
 
-  // Pass a new ref object so the React island re-syncs its defaults.
   tilesRef = { current: tiles }
-  levaRoot.render(<ControlsPanel tilesRef={tilesRef} statsRef={statsRef} />)
+  levaRoot.render(
+    <ControlsPanel
+      tilesRef={tilesRef}
+      statsRef={statsRef}
+      topCameraRef={topCameraRef}
+      topViewConfigRef={topViewConfigRef}
+    />,
+  )
 })
 
 const render = () => {
@@ -80,10 +98,30 @@ const render = () => {
 
   controls.update(delta)
   camera.updateMatrixWorld()
+  cameraHelper.update()
   tiles.setResolutionFromRenderer(camera, renderer)
   tiles.update()
 
   renderer.render(scene, camera)
+
+  const minimapEnabled = topViewConfigRef.current.enabled
+  if (minimapFrame) minimapFrame.style.display = minimapEnabled ? 'block' : 'none'
+
+  if (minimapEnabled) {
+    const minimapSize = 220
+    const margin = 20
+    const canvasSize = renderer.getSize(new THREE.Vector2())
+    const x = canvasSize.x - minimapSize - margin
+    const y = margin
+
+    renderer.setScissorTest(true)
+    renderer.setViewport(x, y, minimapSize, minimapSize)
+    renderer.setScissor(x, y, minimapSize, minimapSize)
+    renderer.render(scene, topCamera)
+    renderer.setScissorTest(false)
+    renderer.setViewport(0, 0, canvasSize.x, canvasSize.y)
+  }
+
 
   statsRef.current = {
     visibleTiles: tiles.visibleTiles.size,

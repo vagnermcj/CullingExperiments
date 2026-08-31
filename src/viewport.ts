@@ -1,9 +1,10 @@
-import type { PerspectiveCamera, WebGLRenderer } from 'three'
+import type { PerspectiveCamera } from 'three'
+import { WebGPURenderer } from 'three/webgpu'
 
 interface ResizeConfig {
   container: HTMLElement
   camera: PerspectiveCamera
-  renderer: WebGLRenderer
+  renderer: WebGPURenderer
 }
 
 export const setupResizeHandler = ({

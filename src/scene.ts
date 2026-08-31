@@ -1,4 +1,5 @@
 import * as THREE from 'three'
+import { WebGPURenderer } from 'three/webgpu'
 import { TilesRenderer } from '3d-tiles-renderer'
 import { DebugTilesPlugin } from '3d-tiles-renderer/plugins'
 import type { SceneSetup } from './types'
@@ -6,7 +7,7 @@ import type { SceneSetup } from './types'
 export const createTilesRenderer = (
   url: string,
   camera: THREE.PerspectiveCamera,
-  renderer: THREE.WebGLRenderer,
+  renderer: THREE.WebGPURenderer,
 ): TilesRenderer => {
   const tiles = new TilesRenderer(url)
   // Debug plugin: registered but disabled by default; Leva panel toggles it.
@@ -37,8 +38,9 @@ export const createMainCameraHelper = (camera: THREE.PerspectiveCamera): THREE.C
   return helper
 }
 
-export const initScene = (canvas: HTMLCanvasElement): SceneSetup => {
-  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true })
+export const initScene = async (canvas: HTMLCanvasElement): Promise<SceneSetup> => {
+  const renderer = new WebGPURenderer({ canvas, antialias: true })
+  await renderer.init()
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
   renderer.outputColorSpace = THREE.SRGBColorSpace
 

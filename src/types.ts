@@ -3,7 +3,7 @@ export interface HudElements {
 }
 
 export interface SceneSetup {
-  renderer: import('three').WebGLRenderer
+  renderer: import('three/webgpu').WebGPURenderer
   scene: import('three').Scene
   camera: import('three').PerspectiveCamera
   tiles: import('3d-tiles-renderer').TilesRenderer

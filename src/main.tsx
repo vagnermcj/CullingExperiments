@@ -24,7 +24,7 @@ if (!app) {
 }
 
 const hud = initHud()
-const { renderer, scene, camera, tiles: initialTiles, topCamera, cameraHelper } = initScene(hud.canvas)
+const { renderer, scene, camera, tiles: initialTiles, topCamera, cameraHelper } = await initScene(hud.canvas)
 
 setupResizeHandler({
   container: app,

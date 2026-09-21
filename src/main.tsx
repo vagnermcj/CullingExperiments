@@ -3,13 +3,11 @@ import * as THREE from 'three'
 import Stats from 'three/examples/jsm/libs/stats.module.js'
 import { createRoot } from 'react-dom/client'
 import { initHud } from './hud'
-import { initScene, createTilesRenderer, disposeTilesRenderer } from './scene'
+import { initScene } from './scene'
 import { setupResizeHandler } from './viewport'
 import { createControls } from './controls'
-import { initUrlWidget } from './urlWidget'
 import { ControlsPanel } from './ControlsPanel'
 import { PerformanceMonitor } from './performance'
-import type { TilesRenderer } from '3d-tiles-renderer'
 
 const app = document.querySelector<HTMLDivElement>('#app')
 
@@ -18,7 +16,7 @@ if (!app) {
 }
 
 const hud = initHud()
-const { renderer, scene, camera, tiles: initialTiles, topCamera, cameraHelper } = await initScene(hud.canvas)
+const { renderer, scene, camera, forest, topCamera, cameraHelper } = await initScene(hud.canvas)
 
 setupResizeHandler({
   container: app,
@@ -26,10 +24,9 @@ setupResizeHandler({
   renderer,
 })
 
-const controls = createControls({ camera, domElement: renderer.domElement })
+const controls = createControls({ camera, domElement: renderer.domElement, movementSpeed: 15 })
 
 const clock = new THREE.Clock()
-let tiles: TilesRenderer = initialTiles
 
 // three.js Stats panel
 const stats = new Stats()
@@ -43,7 +40,7 @@ if (!statsHost) {
 }
 statsHost.appendChild(stats.dom)
 
-const perf = new PerformanceMonitor(renderer, () => tiles.group)
+const perf = new PerformanceMonitor(renderer, () => forest.group)
 
 const topViewConfigRef: { current: { enabled: boolean } } = { current: { enabled: true } }
 const topCameraRef = { current: topCamera }
@@ -56,14 +53,9 @@ levaRoot.render(
     perfRef={{ current: perf.snapshot }}
     topCameraRef={topCameraRef}
     topViewConfigRef={topViewConfigRef}
+    forest={forest}
   />,
 )
-
-initUrlWidget((url: string) => {
-  disposeTilesRenderer(tiles, scene)
-  tiles = createTilesRenderer(url, camera, renderer)
-  scene.add(tiles.group)
-})
 
 const render = () => {
   perf.beginFrame()
@@ -72,8 +64,6 @@ const render = () => {
   controls.update(delta)
   camera.updateMatrixWorld()
   cameraHelper.update()
-  tiles.setResolutionFromRenderer(camera, renderer)
-  tiles.update()
   perf.markUpdateDone()
 
   renderer.render(scene, camera)
@@ -98,8 +88,7 @@ const render = () => {
     renderer.setViewport(0, 0, canvasSize.x, canvasSize.y)
   }
 
-
-  perf.endFrame(tiles, minimapEnabled)
+  perf.endFrame(minimapEnabled)
 
   stats.update()
   requestAnimationFrame(render)

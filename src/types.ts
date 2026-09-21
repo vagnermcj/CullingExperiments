@@ -6,7 +6,7 @@ export interface SceneSetup {
   renderer: import('three/webgpu').WebGPURenderer
   scene: import('three').Scene
   camera: import('three').PerspectiveCamera
-  tiles: import('3d-tiles-renderer').TilesRenderer
+  forest: import('./forestScene').ForestScene
   topCamera: import('three').OrthographicCamera
   cameraHelper: import('three').CameraHelper
 }

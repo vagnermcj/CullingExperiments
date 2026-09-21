@@ -1,6 +1,5 @@
 import type * as THREE from 'three'
 import type { WebGPURenderer } from 'three/webgpu'
-import type { TilesRenderer } from '3d-tiles-renderer'
 
 // Ring buffer length for frame-time percentiles (~10 s at 60 FPS).
 const FRAME_WINDOW = 600
@@ -36,17 +35,6 @@ export interface PerfSnapshot {
   candidateMeshes: number
   candidateTriangles: number
   culledTrianglesPct: number
-  // Tiles
-  tilesVisible: number
-  tilesActive: number
-  tilesInFrustum: number
-  tilesUsed: number
-  tilesCached: number
-  tilesDownloading: number
-  tilesParsing: number
-  tilesQueued: number
-  tilesFailed: number
-  loadProgress: number
   // Memory
   gpuTotalBytes: number
   gpuTexturesBytes: number
@@ -54,7 +42,6 @@ export interface PerfSnapshot {
   geometries: number
   textures: number
   programs: number
-  tileCacheBytes: number
   jsHeapBytes: number | null
 }
 
@@ -78,23 +65,12 @@ export const createEmptySnapshot = (): PerfSnapshot => ({
   candidateMeshes: 0,
   candidateTriangles: 0,
   culledTrianglesPct: 0,
-  tilesVisible: 0,
-  tilesActive: 0,
-  tilesInFrustum: 0,
-  tilesUsed: 0,
-  tilesCached: 0,
-  tilesDownloading: 0,
-  tilesParsing: 0,
-  tilesQueued: 0,
-  tilesFailed: 0,
-  loadProgress: 0,
   gpuTotalBytes: 0,
   gpuTexturesBytes: 0,
   gpuGeometryBytes: 0,
   geometries: 0,
   textures: 0,
   programs: 0,
-  tileCacheBytes: 0,
   jsHeapBytes: null,
 })
 
@@ -116,7 +92,7 @@ const meshTriangles = (mesh: THREE.Mesh): number => {
  *
  * Usage per frame:
  *   perf.beginFrame(); ...update...; perf.markUpdateDone(); ...render main...;
- *   perf.markMainDone(); ...render minimap...; perf.endFrame(tiles).
+ *   perf.markMainDone(); ...render minimap...; perf.endFrame().
  */
 export class PerformanceMonitor {
   readonly snapshot: PerfSnapshot = createEmptySnapshot()
@@ -170,7 +146,7 @@ export class PerformanceMonitor {
     this.mainPass = { drawCalls: r.drawCalls, triangles: r.triangles, lines: r.lines, points: r.points }
   }
 
-  endFrame(tiles: TilesRenderer, minimapRendered: boolean): void {
+  endFrame(minimapRendered: boolean): void {
     const now = performance.now()
     const s = this.snapshot
     const r = this.renderer.info.render
@@ -191,8 +167,7 @@ export class PerformanceMonitor {
       this.lastPublish = now
       this.computeFrameStats()
       this.sampleScene()
-      this.sampleTiles(tiles)
-      this.sampleMemory(tiles)
+      this.sampleMemory()
     }
   }
 
@@ -224,7 +199,7 @@ export class PerformanceMonitor {
   }
 
   /**
-   * Walks the tiles group once, counting everything that is loaded versus what is
+   * Walks the scene root once, counting everything that is loaded versus what is
    * still visible in the scene graph (i.e. what three.js will try to draw before its
    * own per-object frustum culling). Comparing this to the rendered triangles gives
    * the effect of frustum culling.
@@ -261,22 +236,7 @@ export class PerformanceMonitor {
         : 0
   }
 
-  private sampleTiles(tiles: TilesRenderer): void {
-    const s = this.snapshot
-    // `stats` exists at runtime but is missing from the TilesRenderer typings.
-    const t = (tiles as unknown as { stats: Record<string, number | undefined> }).stats
-    s.tilesVisible = tiles.visibleTiles.size
-    s.tilesActive = tiles.activeTiles.size
-    s.tilesInFrustum = t.inFrustum ?? 0
-    s.tilesUsed = t.used ?? 0
-    s.tilesDownloading = t.downloading ?? 0
-    s.tilesParsing = t.parsing ?? 0
-    s.tilesQueued = t.queued ?? 0
-    s.tilesFailed = t.failed ?? 0
-    s.loadProgress = Math.round(tiles.loadProgress * 100)
-  }
-
-  private sampleMemory(tiles: TilesRenderer): void {
+  private sampleMemory(): void {
     const s = this.snapshot
     const m = this.renderer.info.memory
     s.gpuTotalBytes = m.total
@@ -285,11 +245,6 @@ export class PerformanceMonitor {
     s.geometries = m.geometries
     s.textures = m.textures
     s.programs = m.programs
-    // cachedBytes / itemSet exist at runtime but are missing from the LRUCache typings.
-    const cache = tiles.lruCache as unknown as { cachedBytes: number; itemSet: Map<unknown, unknown> }
-    s.tileCacheBytes = cache.cachedBytes
-    s.tilesCached = cache.itemSet.size
-
     // Chromium-only, non-standard.
     const mem = (performance as unknown as { memory?: { usedJSHeapSize: number } }).memory
     s.jsHeapBytes = mem ? mem.usedJSHeapSize : null

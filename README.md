@@ -1,6 +1,8 @@
-# tiles-viewer
+# culling-experiments
 
-A Vite + TypeScript viewer for 3D Tiles, built with Three.js.
+A Vite + TypeScript test bed for frustum and occlusion culling experiments, built with Three.js (WebGPU).
+
+The scene is a ground plane with a configurable number of trees spread uniformly (from `public/data/tree.glb`) and a few walls near the camera start, which will act as occluders.
 
 ## Requirements
 
@@ -19,13 +21,9 @@ npm install
 npm run dev
 ```
 
-Vite will print a local URL (typically `http://localhost:5173`). Open it in a browser to view the tiles.
+Vite will print a local URL (typically `http://localhost:5173`). Open it in a browser.
 
-The default tileset is `/data/add_spheres/tileset.json`. To load a different tileset, either edit the URL widget in the page or pass it via a query parameter:
-
-```
-http://localhost:5173/?tileset=/path/to/your/tileset.json
-```
+Use the **Forest** folder in the controls panel to change the number of trees and to toggle the walls. The placement is deterministic, so the same tree count always produces the same forest. If `public/data/tree.glb` is missing, a simple placeholder tree is used.
 
 ## Other scripts
 

@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 import { Leva, folder, monitor, useControls } from 'leva'
 import type { OrthographicCamera } from 'three'
 import type { PerfSnapshot } from './performance'
+import type { ForestScene } from './forestScene'
 
 const MB = 2 ** 20
 
@@ -9,6 +10,7 @@ interface ControlsPanelProps {
   perfRef: { current: PerfSnapshot }
   topCameraRef: { current: OrthographicCamera | null }
   topViewConfigRef: { current: { enabled: boolean } }
+  forest: ForestScene
 }
 
 const readout = (value = '–') => ({ value, disabled: true })
@@ -21,7 +23,7 @@ const count = (n: number) => (n >= 1e6 ? `${(n / 1e6).toFixed(2)} M` : n >= 1e4 
 
 const PANEL_REFRESH_MS = 250
 
-export const ControlsPanel = ({ perfRef, topCameraRef, topViewConfigRef }: ControlsPanelProps) => {
+export const ControlsPanel = ({ perfRef, topCameraRef, topViewConfigRef, forest }: ControlsPanelProps) => {
   const [, setPerf] = useControls(
     'Performance',
     () => ({
@@ -54,19 +56,6 @@ export const ControlsPanel = ({ perfRef, topCameraRef, topViewConfigRef }: Contr
         candidateTriangles: readout(),
         culledByFrustum: readout(),
       }),
-      Tiles: folder(
-        {
-          tilesVisible: readout(),
-          tilesActive: readout(),
-          tilesInFrustum: readout(),
-          tilesUsed: readout(),
-          tilesCached: readout(),
-          tilesLoading: readout(),
-          tilesFailed: readout(),
-          loadProgress: readout(),
-        },
-        { collapsed: true },
-      ),
       Memory: folder(
         {
           gpuTotal: readout(),
@@ -75,7 +64,6 @@ export const ControlsPanel = ({ perfRef, topCameraRef, topViewConfigRef }: Contr
           geometries: readout(),
           textures: readout(),
           programs: readout(),
-          tileCache: readout(),
           jsHeap: readout(),
         },
         { collapsed: true },
@@ -106,21 +94,12 @@ export const ControlsPanel = ({ perfRef, topCameraRef, topViewConfigRef }: Contr
         loadedTriangles: count(p.loadedTriangles),
         candidateTriangles: count(p.candidateTriangles),
         culledByFrustum: `${p.culledTrianglesPct.toFixed(1)}%`,
-        tilesVisible: int(p.tilesVisible),
-        tilesActive: int(p.tilesActive),
-        tilesInFrustum: int(p.tilesInFrustum),
-        tilesUsed: int(p.tilesUsed),
-        tilesCached: int(p.tilesCached),
-        tilesLoading: `${p.tilesDownloading} dl · ${p.tilesParsing} parse · ${p.tilesQueued} queued`,
-        tilesFailed: int(p.tilesFailed),
-        loadProgress: `${p.loadProgress}%`,
         gpuTotal: mb(p.gpuTotalBytes),
         gpuTextures: mb(p.gpuTexturesBytes),
         gpuGeometry: mb(p.gpuGeometryBytes),
         geometries: int(p.geometries),
         textures: int(p.textures),
         programs: int(p.programs),
-        tileCache: mb(p.tileCacheBytes),
         jsHeap: p.jsHeapBytes === null ? 'n/a' : mb(p.jsHeapBytes),
       })
     }
@@ -130,8 +109,8 @@ export const ControlsPanel = ({ perfRef, topCameraRef, topViewConfigRef }: Contr
 
   const [topViewValues] = useControls('Top View', () => ({
     enabled: true,
-    height: { value: 40, min: 5, max: 200, step: 1 },
-    extent: { value: 8, min: 1, max: 50, step: 1 },
+    height: { value: 150, min: 5, max: 300, step: 1 },
+    extent: { value: 200, min: 5, max: 250, step: 1 },
   }))
 
   useEffect(() => {
@@ -146,11 +125,21 @@ export const ControlsPanel = ({ perfRef, topCameraRef, topViewConfigRef }: Contr
     cam.updateProjectionMatrix()
   }, [topViewValues, topCameraRef, topViewConfigRef])
 
+  const [forestValues] = useControls('Forest', () => ({
+    trees: { value: 1000, min: 0, max: 20000, step: 100 },
+    walls: true,
+  }))
+
+  useEffect(() => {
+    forest.setTreeCount(forestValues.trees)
+    forest.setWalls(forestValues.walls)
+  }, [forestValues, forest])
+
   return (
     <Leva
       fill
       flat
-      titleBar={{ title: 'Tiles Controls', drag: true, filter: false }}
+      titleBar={{ title: 'Culling Controls', drag: true, filter: false }}
       hideCopyButton
     />
   )

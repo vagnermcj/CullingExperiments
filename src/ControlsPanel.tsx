@@ -1,157 +1,132 @@
 import { useEffect } from 'react'
-import { Leva, useControls } from 'leva'
-import type { TilesRenderer } from '3d-tiles-renderer'
-import type { DebugTilesPlugin } from '3d-tiles-renderer/plugins'
+import { Leva, folder, monitor, useControls } from 'leva'
 import type { OrthographicCamera } from 'three'
+import type { PerfSnapshot } from './performance'
 
-const GIGABYTE = 2 ** 30
-
-interface StatsSnapshot {
-  visibleTiles: number
-  activeTiles: number
-  loadProgress: number
-  tileStatsLabel: string
-}
+const MB = 2 ** 20
 
 interface ControlsPanelProps {
-  tilesRef: { current: TilesRenderer | null }
-  statsRef: { current: StatsSnapshot }
+  perfRef: { current: PerfSnapshot }
   topCameraRef: { current: OrthographicCamera | null }
   topViewConfigRef: { current: { enabled: boolean } }
 }
 
+const readout = (value = '–') => ({ value, disabled: true })
 
-export const ControlsPanel = ({
-  tilesRef,
-  statsRef,
-  topCameraRef,
-  topViewConfigRef,
-}: ControlsPanelProps) => {
-  const [tilesValues, setTiles] = useControls(
-    'Tiles',
+const int = (n: number) => Math.round(n).toLocaleString('en-US')
+const ms = (n: number) => `${n.toFixed(2)} ms`
+const fps = (n: number) => n.toFixed(1)
+const mb = (bytes: number) => `${(bytes / MB).toFixed(1)} MB`
+const count = (n: number) => (n >= 1e6 ? `${(n / 1e6).toFixed(2)} M` : n >= 1e4 ? `${(n / 1e3).toFixed(1)} k` : int(n))
+
+const PANEL_REFRESH_MS = 250
+
+export const ControlsPanel = ({ perfRef, topCameraRef, topViewConfigRef }: ControlsPanelProps) => {
+  const [, setPerf] = useControls(
+    'Performance',
     () => ({
-      errorTarget: { value: 500, min: 0, step: 0.5 },
-      maxTilesProcessed: { value: 250, min: 1, step: 10 },
-      displayActiveTiles: false,
-      displayBBox: true,
+      frameGraph: monitor(() => perfRef.current.frameMs, { graph: true, interval: 50 }),
+      Frame: folder({
+        fps: readout(),
+        frameTime: readout(),
+        fps1Low: readout(),
+        fps01Low: readout(),
+        worstFrame: readout(),
+      }),
+      'CPU time': folder(
+        {
+          updateTime: readout(),
+          renderTime: readout(),
+          minimapTime: readout(),
+        },
+        { collapsed: true },
+      ),
+      'Main view': folder({
+        drawCalls: readout(),
+        triangles: readout(),
+        linesPoints: readout(),
+        minimapPass: readout(),
+      }),
+      'Culling candidates': folder({
+        loadedMeshes: readout(),
+        candidateMeshes: readout(),
+        loadedTriangles: readout(),
+        candidateTriangles: readout(),
+        culledByFrustum: readout(),
+      }),
+      Tiles: folder(
+        {
+          tilesVisible: readout(),
+          tilesActive: readout(),
+          tilesInFrustum: readout(),
+          tilesUsed: readout(),
+          tilesCached: readout(),
+          tilesLoading: readout(),
+          tilesFailed: readout(),
+          loadProgress: readout(),
+        },
+        { collapsed: true },
+      ),
+      Memory: folder(
+        {
+          gpuTotal: readout(),
+          gpuTextures: readout(),
+          gpuGeometry: readout(),
+          geometries: readout(),
+          textures: readout(),
+          programs: readout(),
+          tileCache: readout(),
+          jsHeap: readout(),
+        },
+        { collapsed: true },
+      ),
     }),
     [],
   )
 
-  const [cacheValues, setCache] = useControls(
-    'LRU Cache',
-    () => ({
-      minSize: { value: 6000, min: 0, max: 50000, step: 1 },
-      maxSize: { value: 8000, min: 0, max: 50000, step: 1 },
-      minBytesSize: { value: 0.3 * GIGABYTE, min: 0, max: 2 * GIGABYTE, step: 1 },
-      maxBytesSize: { value: 0.4 * GIGABYTE, min: 0, max: 2 * GIGABYTE, step: 1 },
-      unloadPercent: { value: 0.05, min: 0, max: 1, step: 0.05 },
-      autoMarkUnused: true,
-    }),
-    { collapsed: true },
-    [],
-  )
-
-  const [queueValues, setQueues] = useControls(
-    'Priority Queues',
-    () => ({
-      downloadMaxJobs: { value: 6, min: 1, step: 1 },
-      parseMaxJobs: { value: 6, min: 1, step: 1 },
-      processMaxJobs: { value: 6, min: 1, step: 1 },
-    }),
-    { collapsed: true },
-    [],
-  )
-
-  const [, setStats] = useControls(
-    'Stats',
-    () => ({
-      visibleTiles: { value: 0, disabled: true },
-      activeTiles: { value: 0, disabled: true },
-      loadProgress: { value: '0%', disabled: true },
-      tileStats: { value: 'Tiles: loading…', disabled: true },
-    }),
-    { collapsed: true },
-    [],
-  )
-
-  // Write Leva values back to the current tiles renderer.
+  // Push a fresh snapshot into the panel at a low rate; setting Leva values every frame is costly.
   useEffect(() => {
-    const tiles = tilesRef.current
-    if (!tiles) return
-    tiles.errorTarget = tilesValues.errorTarget
-    tiles.maxTilesProcessed = tilesValues.maxTilesProcessed
-    tiles.displayActiveTiles = tilesValues.displayActiveTiles
-    const debugPlugin = tiles.getPluginByName('DEBUG_TILES_PLUGIN') as DebugTilesPlugin | undefined
-    if (debugPlugin) {
-      debugPlugin.enabled = tilesValues.displayBBox
-      debugPlugin.displayBoxBounds = tilesValues.displayBBox
-    }
-  }, [tilesValues, tilesRef])
-
-  useEffect(() => {
-    const tiles = tilesRef.current
-    if (!tiles) return
-    const cache = tiles.lruCache
-    cache.minSize = cacheValues.minSize
-    cache.maxSize = cacheValues.maxSize
-    cache.minBytesSize = cacheValues.minBytesSize
-    cache.maxBytesSize = cacheValues.maxBytesSize
-    cache.unloadPercent = cacheValues.unloadPercent
-    cache.autoMarkUnused = cacheValues.autoMarkUnused
-  }, [cacheValues, tilesRef])
-
-  useEffect(() => {
-    const tiles = tilesRef.current
-    if (!tiles) return
-    tiles.downloadQueue.maxJobs = queueValues.downloadMaxJobs
-    tiles.parseQueue.maxJobs = queueValues.parseMaxJobs
-    tiles.processNodeQueue.maxJobs = queueValues.processMaxJobs
-  }, [queueValues, tilesRef])
-
-  // When a new tiles renderer is swapped in, refresh the panel defaults.
-  useEffect(() => {
-    const tiles = tilesRef.current
-    if (!tiles) return
-    const cache = tiles.lruCache
-    const debugPlugin = tiles.getPluginByName('DEBUG_TILES_PLUGIN') as DebugTilesPlugin | undefined
-    setTiles({
-      errorTarget: tiles.errorTarget,
-      maxTilesProcessed: tiles.maxTilesProcessed,
-      displayActiveTiles: tiles.displayActiveTiles,
-      displayBBox: debugPlugin?.enabled ?? false,
-    })
-    setCache({
-      minSize: cache.minSize,
-      maxSize: cache.maxSize,
-      minBytesSize: cache.minBytesSize,
-      maxBytesSize: cache.maxBytesSize,
-      unloadPercent: cache.unloadPercent,
-      autoMarkUnused: cache.autoMarkUnused,
-    })
-    setQueues({
-      downloadMaxJobs: tiles.downloadQueue.maxJobs,
-      parseMaxJobs: tiles.parseQueue.maxJobs,
-      processMaxJobs: tiles.processNodeQueue.maxJobs,
-    })
-  }, [tilesRef.current, setTiles, setCache, setQueues, tilesRef])
-
-  // Push live stats into the Leva panel each frame.
-  useEffect(() => {
-    let rafId = 0
-    const update = () => {
-      const s = statsRef.current
-      setStats({
-        visibleTiles: s.visibleTiles,
-        activeTiles: s.activeTiles,
-        loadProgress: `${s.loadProgress}%`,
-        tileStats: s.tileStatsLabel,
+    const push = () => {
+      const p = perfRef.current
+      setPerf({
+        fps: fps(p.fps),
+        frameTime: ms(p.frameMs),
+        fps1Low: fps(p.fps1Low),
+        fps01Low: fps(p.fps01Low),
+        worstFrame: ms(p.worstFrameMs),
+        updateTime: ms(p.updateMs),
+        renderTime: ms(p.renderMs),
+        minimapTime: ms(p.minimapMs),
+        drawCalls: int(p.drawCalls),
+        triangles: count(p.triangles),
+        linesPoints: `${int(p.lines)} / ${int(p.points)}`,
+        minimapPass: `${int(p.minimapDrawCalls)} calls · ${count(p.minimapTriangles)} tris`,
+        loadedMeshes: int(p.loadedMeshes),
+        candidateMeshes: int(p.candidateMeshes),
+        loadedTriangles: count(p.loadedTriangles),
+        candidateTriangles: count(p.candidateTriangles),
+        culledByFrustum: `${p.culledTrianglesPct.toFixed(1)}%`,
+        tilesVisible: int(p.tilesVisible),
+        tilesActive: int(p.tilesActive),
+        tilesInFrustum: int(p.tilesInFrustum),
+        tilesUsed: int(p.tilesUsed),
+        tilesCached: int(p.tilesCached),
+        tilesLoading: `${p.tilesDownloading} dl · ${p.tilesParsing} parse · ${p.tilesQueued} queued`,
+        tilesFailed: int(p.tilesFailed),
+        loadProgress: `${p.loadProgress}%`,
+        gpuTotal: mb(p.gpuTotalBytes),
+        gpuTextures: mb(p.gpuTexturesBytes),
+        gpuGeometry: mb(p.gpuGeometryBytes),
+        geometries: int(p.geometries),
+        textures: int(p.textures),
+        programs: int(p.programs),
+        tileCache: mb(p.tileCacheBytes),
+        jsHeap: p.jsHeapBytes === null ? 'n/a' : mb(p.jsHeapBytes),
       })
-      rafId = requestAnimationFrame(update)
     }
-    rafId = requestAnimationFrame(update)
-    return () => cancelAnimationFrame(rafId)
-  }, [setStats, statsRef])
+    const id = window.setInterval(push, PANEL_REFRESH_MS)
+    return () => window.clearInterval(id)
+  }, [setPerf, perfRef])
 
   const [topViewValues] = useControls('Top View', () => ({
     enabled: true,

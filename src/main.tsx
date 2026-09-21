@@ -8,14 +8,8 @@ import { setupResizeHandler } from './viewport'
 import { createControls } from './controls'
 import { initUrlWidget } from './urlWidget'
 import { ControlsPanel } from './ControlsPanel'
+import { PerformanceMonitor } from './performance'
 import type { TilesRenderer } from '3d-tiles-renderer'
-
-interface StatsSnapshot {
-  visibleTiles: number
-  activeTiles: number
-  loadProgress: number
-  tileStatsLabel: string
-}
 
 const app = document.querySelector<HTMLDivElement>('#app')
 
@@ -49,51 +43,30 @@ if (!statsHost) {
 }
 statsHost.appendChild(stats.dom)
 
-// Live readouts shared with the Leva panel.
-const statsRef: { current: StatsSnapshot } = {
-  current: {
-    visibleTiles: 0,
-    activeTiles: 0,
-    loadProgress: 0,
-    tileStatsLabel: 'Tiles: loading…',
-  },
-}
-
+const perf = new PerformanceMonitor(renderer, () => tiles.group)
 
 const topViewConfigRef: { current: { enabled: boolean } } = { current: { enabled: true } }
 const topCameraRef = { current: topCamera }
 const minimapFrame = document.querySelector<HTMLDivElement>('#minimap-frame')
 
-let tilesRef = { current: tiles }
 const levaHost = document.querySelector<HTMLDivElement>('#leva-host') ?? document.body
 const levaRoot = createRoot(levaHost)
 levaRoot.render(
   <ControlsPanel
-    tilesRef={tilesRef}
-    statsRef={statsRef}
+    perfRef={{ current: perf.snapshot }}
     topCameraRef={topCameraRef}
     topViewConfigRef={topViewConfigRef}
   />,
 )
 
-
 initUrlWidget((url: string) => {
   disposeTilesRenderer(tiles, scene)
   tiles = createTilesRenderer(url, camera, renderer)
   scene.add(tiles.group)
-
-  tilesRef = { current: tiles }
-  levaRoot.render(
-    <ControlsPanel
-      tilesRef={tilesRef}
-      statsRef={statsRef}
-      topCameraRef={topCameraRef}
-      topViewConfigRef={topViewConfigRef}
-    />,
-  )
 })
 
 const render = () => {
+  perf.beginFrame()
   const delta = clock.getDelta()
 
   controls.update(delta)
@@ -101,8 +74,10 @@ const render = () => {
   cameraHelper.update()
   tiles.setResolutionFromRenderer(camera, renderer)
   tiles.update()
+  perf.markUpdateDone()
 
   renderer.render(scene, camera)
+  perf.markMainDone()
 
   const minimapEnabled = topViewConfigRef.current.enabled
   if (minimapFrame) minimapFrame.style.display = minimapEnabled ? 'block' : 'none'
@@ -112,7 +87,8 @@ const render = () => {
     const margin = 20
     const canvasSize = renderer.getSize(new THREE.Vector2())
     const x = canvasSize.x - minimapSize - margin
-    const y = margin
+    // WebGPU viewport origin is top-left (WebGL's was bottom-left), so anchor from the bottom explicitly
+    const y = canvasSize.y - minimapSize - margin
 
     renderer.setScissorTest(true)
     renderer.setViewport(x, y, minimapSize, minimapSize)
@@ -123,12 +99,7 @@ const render = () => {
   }
 
 
-  statsRef.current = {
-    visibleTiles: tiles.visibleTiles.size,
-    activeTiles: tiles.activeTiles.size,
-    loadProgress: Math.round(tiles.loadProgress * 100),
-    tileStatsLabel: `Tiles: ${tiles.visibleTiles.size} visible · ${tiles.activeTiles.size} active · ${Math.round(tiles.loadProgress * 100)}% loaded`,
-  }
+  perf.endFrame(tiles, minimapEnabled)
 
   stats.update()
   requestAnimationFrame(render)

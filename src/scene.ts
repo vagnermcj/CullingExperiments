@@ -7,11 +7,23 @@ import type { SceneSetup } from './types'
 export const createTilesRenderer = (
   url: string,
   camera: THREE.PerspectiveCamera,
-  renderer: THREE.WebGPURenderer,
+  renderer: WebGPURenderer,
 ): TilesRenderer => {
   const tiles = new TilesRenderer(url)
-  // Debug plugin: registered but disabled by default; Leva panel toggles it.
-  tiles.registerPlugin(new DebugTilesPlugin({ enabled: false }))
+  // Fixed tile settings (previously exposed through the Leva panel).
+  tiles.errorTarget = 500
+  tiles.maxTilesProcessed = 250
+  tiles.displayActiveTiles = false
+  tiles.lruCache.minSize = 6000
+  tiles.lruCache.maxSize = 8000
+  tiles.lruCache.minBytesSize = 0.3 * 2 ** 30
+  tiles.lruCache.maxBytesSize = 0.4 * 2 ** 30
+  tiles.lruCache.unloadPercent = 0.05
+  tiles.lruCache.autoMarkUnused = true
+  tiles.downloadQueue.maxJobs = 6
+  tiles.parseQueue.maxJobs = 6
+  tiles.processNodeQueue.maxJobs = 6
+  tiles.registerPlugin(new DebugTilesPlugin({ enabled: true, displayBoxBounds: true }))
   tiles.setCamera(camera)
   tiles.setResolutionFromRenderer(camera, renderer)
   return tiles

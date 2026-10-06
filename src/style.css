@@ -134,3 +134,24 @@ h1 {
   pointer-events: none;
   box-shadow: 0 8px 30px rgba(6, 16, 32, 0.45);
 }
+
+.load-status {
+  position: absolute;
+  left: 50%;
+  bottom: 2rem;
+  transform: translateX(-50%);
+  max-width: min(36rem, calc(100% - 2.5rem));
+  padding: 0.6rem 1rem;
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
+  background: var(--panel-bg);
+  backdrop-filter: blur(6px);
+  font-size: 0.85rem;
+  z-index: 10002;
+  pointer-events: none;
+}
+
+.load-status.error {
+  border-color: rgba(255, 120, 120, 0.6);
+  color: #ffb4b4;
+}

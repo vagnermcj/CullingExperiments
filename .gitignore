@@ -12,6 +12,9 @@ dist
 dist-ssr
 *.local
 
+# CAD dataset (multi-GB, not versioned)
+public/data/cad/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

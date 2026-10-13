@@ -41,7 +41,7 @@ export const frameModel = (
 }
 
 export const initScene = async (canvas: HTMLCanvasElement): Promise<SceneSetup> => {
-  const renderer = new WebGPURenderer({ canvas, antialias: true })
+  const renderer = new WebGPURenderer({ canvas, antialias: true, trackTimestamp: true })
   await renderer.init()
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
   renderer.outputColorSpace = THREE.SRGBColorSpace

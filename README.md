@@ -18,6 +18,16 @@ The scene is a real industrial CAD model (an `envmesh` dataset, P-75: ~499 M tri
 
 The **CAD** folder in the controls panel sets the triangle budget, the minimum size, the tier thresholds, the resident cap and a *freeze selection* toggle (freeze, then fly around to inspect what was selected). The **HLOD** folder shows what the traversal selected, drew and loaded. The minimap is off by default because it renders the scene a second time.
 
+## Benchmark (`src/benchmark/`)
+
+A game-style benchmark: pick a technique and a duration in the **Benchmark** panel (top right) and press **Play**. The camera then flies a fixed closed loop around and through the model (`cameraPath.ts`, edit its waypoints to change what is measured) while the panel shows live numbers; **Esc** cancels and puts the camera back.
+
+- **Phases:** an optional warm-up lap (the same loop at 3x speed, so the recorded lap measures rendering rather than streaming), a short wait until the loads settle, then the recorded lap. The path is driven by time, so every run sees the same poses.
+- **Results:** average FPS, 1% / 0.1% lows, frame-time percentiles, GPU time, CPU update/render time, triangles, draw calls, selected cells and resident memory, plus a chart of any of them over the run. **Save** keeps the run (name it first), **Discard** throws it away.
+- **History:** every saved run is kept in the browser's `localStorage` (about 40 KB each), with the GPU, resolution and CAD settings it was measured with. Filter by technique or GPU, tick runs to overlay them on one chart, open one for its details, or delete it.
+- **GPU time** comes from WebGPU timestamp queries, so it is not capped by vsync like FPS is. It shows `n/a` where the browser does not support `timestamp-query`.
+- **Techniques:** the four scenarios (no technique, frustum, occlusion, frustum + occlusion) set `cullingConfig.mode` in `src/cad/cullingHooks.ts`. Branch on it inside `beginFrame` / `isCellVisible`; until you do, all four scenarios render the same thing. During a run the controls panel and minimap are hidden.
+
 ## Requirements
 
 - Node.js 18+ (Vite 8 requires Node 18 or 20)

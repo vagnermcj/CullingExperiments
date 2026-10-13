@@ -9,6 +9,9 @@ import { createControls } from './controls'
 import { ControlsPanel } from './ControlsPanel'
 import { PerformanceMonitor } from './performance'
 import { createDefaultSettings, createEmptyStats, loadCadModel, type CadModel } from './cad/cadModel'
+import { BenchmarkRunner } from './benchmark/benchmarkRunner'
+import { BenchmarkUI } from './benchmark/BenchmarkUI'
+import { detectGpuName } from './benchmark/system'
 
 const CAD_URL = `${import.meta.env.BASE_URL}data/cad`
 
@@ -75,6 +78,24 @@ loadCadModel(CAD_URL, cadSettings, cadStats, ({ phase, loaded, total }) => {
     showStatus(error instanceof Error ? error.message : String(error), true)
   })
 
+let gpuName = 'Unknown GPU'
+void detectGpuName().then((name) => (gpuName = name))
+
+const benchmark = new BenchmarkRunner({
+  camera,
+  perf,
+  cadSettings,
+  cadStats,
+  getModel: () => (cad ? { name: cad.metadata.name, bounds: cad.coreBounds } : null),
+  getSystem: () => ({
+    gpu: gpuName,
+    userAgent: navigator.userAgent,
+    resolution: [renderer.domElement.clientWidth, renderer.domElement.clientHeight],
+    pixelRatio: renderer.getPixelRatio(),
+    gpuTiming: perf.gpuTiming,
+  }),
+})
+
 const topViewConfigRef: { current: { enabled: boolean } } = { current: { enabled: false } }
 const topCameraRef = { current: topCamera }
 const minimapFrame = document.querySelector<HTMLDivElement>('#minimap-frame')
@@ -91,13 +112,17 @@ levaRoot.render(
   />,
 )
 
+const benchmarkHost = document.querySelector<HTMLDivElement>('#benchmark-host') ?? document.body
+createRoot(benchmarkHost).render(<BenchmarkUI runner={benchmark} />)
+
 const canvasSize = new THREE.Vector2()
 
 const render = () => {
   perf.beginFrame()
   const delta = clock.getDelta()
 
-  controls.update(delta)
+  if (benchmark.active) benchmark.update(delta)
+  else controls.update(delta)
   camera.updateMatrixWorld()
   cameraHelper.update()
   renderer.getSize(canvasSize)
@@ -107,7 +132,7 @@ const render = () => {
   renderer.render(scene, camera)
   perf.markMainDone()
 
-  const minimapEnabled = topViewConfigRef.current.enabled
+  const minimapEnabled = topViewConfigRef.current.enabled && !benchmark.active
   if (minimapFrame) minimapFrame.style.display = minimapEnabled ? 'block' : 'none'
 
   if (minimapEnabled) {
@@ -126,6 +151,7 @@ const render = () => {
   }
 
   perf.endFrame(minimapEnabled)
+  benchmark.recordFrame(delta * 1000)
 
   stats.update()
   requestAnimationFrame(render)

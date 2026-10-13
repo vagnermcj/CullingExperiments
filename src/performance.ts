@@ -20,6 +20,8 @@ export interface PerfSnapshot {
   updateMs: number
   renderMs: number
   minimapMs: number
+  // GPU time of the render pass (ms, smoothed); 0 when timestamp queries are unsupported
+  gpuMs: number
   // Main camera pass
   drawCalls: number
   triangles: number
@@ -47,6 +49,7 @@ export const createEmptySnapshot = (): PerfSnapshot => ({
   updateMs: 0,
   renderMs: 0,
   minimapMs: 0,
+  gpuMs: 0,
   drawCalls: 0,
   triangles: 0,
   lines: 0,
@@ -78,6 +81,9 @@ interface PassStats {
  */
 export class PerformanceMonitor {
   readonly snapshot: PerfSnapshot = createEmptySnapshot()
+  /** Unsmoothed values of the last finished frame; `gpuMs` lags by a frame or two (async readback) and is null without timestamp queries. */
+  readonly latest: { updateMs: number; renderMs: number; gpuMs: number | null } = { updateMs: 0, renderMs: 0, gpuMs: null }
+  readonly gpuTiming: boolean
 
   private readonly frameTimes = new Float32Array(FRAME_WINDOW)
   private frameCount = 0
@@ -95,6 +101,7 @@ export class PerformanceMonitor {
 
   constructor(renderer: WebGPURenderer) {
     this.renderer = renderer
+    this.gpuTiming = renderer.hasFeature('timestamp-query')
     // The renderer is driven from our own rAF loop and renders twice per frame
     // (main + minimap), so counters must be reset manually to be meaningful.
     renderer.info.autoReset = false
@@ -131,8 +138,10 @@ export class PerformanceMonitor {
     const r = this.renderer.info.render
 
     const smooth = (prev: number, next: number) => (prev === 0 ? next : prev + (next - prev) * EMA_ALPHA)
-    s.updateMs = smooth(s.updateMs, this.updateDone - this.frameStart)
-    s.renderMs = smooth(s.renderMs, this.mainDone - this.updateDone)
+    this.latest.updateMs = this.updateDone - this.frameStart
+    this.latest.renderMs = this.mainDone - this.updateDone
+    s.updateMs = smooth(s.updateMs, this.latest.updateMs)
+    s.renderMs = smooth(s.renderMs, this.latest.renderMs)
     s.minimapMs = minimapRendered ? smooth(s.minimapMs, now - this.mainDone) : 0
 
     s.drawCalls = this.mainPass.drawCalls
@@ -142,11 +151,25 @@ export class PerformanceMonitor {
     s.minimapDrawCalls = minimapRendered ? r.drawCalls - this.mainPass.drawCalls : 0
     s.minimapTriangles = minimapRendered ? r.triangles - this.mainPass.triangles : 0
 
+    if (this.gpuTiming) this.resolveGpuTime()
+
     if (now - this.lastPublish >= SAMPLE_MS) {
       this.lastPublish = now
       this.computeFrameStats()
       this.sampleMemory()
     }
+  }
+
+  /** Resolves the render-pass timestamps of the latest frame; a request already in flight is shared. */
+  private resolveGpuTime(): void {
+    this.renderer
+      .resolveTimestampsAsync('render')
+      .then((ms) => {
+        if (typeof ms !== 'number' || ms <= 0) return
+        this.latest.gpuMs = ms
+        this.snapshot.gpuMs = this.snapshot.gpuMs === 0 ? ms : this.snapshot.gpuMs + (ms - this.snapshot.gpuMs) * EMA_ALPHA
+      })
+      .catch(() => {})
   }
 
   private computeFrameStats(): void {

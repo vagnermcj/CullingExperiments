@@ -32,6 +32,7 @@ export const ControlsPanel = ({ perfRef, topCameraRef, topViewConfigRef, cadSett
       Frame: folder({
         fps: readout(),
         frameTime: readout(),
+        gpuTime: readout(),
         fps1Low: readout(),
         fps01Low: readout(),
         worstFrame: readout(),
@@ -82,6 +83,7 @@ export const ControlsPanel = ({ perfRef, topCameraRef, topViewConfigRef, cadSett
       setPerf({
         fps: fps(p.fps),
         frameTime: ms(p.frameMs),
+        gpuTime: p.gpuMs > 0 ? ms(p.gpuMs) : 'n/a',
         fps1Low: fps(p.fps1Low),
         fps01Low: fps(p.fps01Low),
         worstFrame: ms(p.worstFrameMs),

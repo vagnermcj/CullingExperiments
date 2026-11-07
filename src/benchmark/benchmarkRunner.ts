@@ -169,6 +169,7 @@ export class BenchmarkRunner {
     const sample: FrameSample = {
       frameMs,
       gpuMs: perf.latest.gpuMs,
+      cullMs: perf.latest.cullMs,
       updateMs: perf.latest.updateMs,
       renderMs: perf.latest.renderMs,
       triangles: snapshot.triangles,
@@ -273,6 +274,7 @@ export class BenchmarkRunner {
     const ascending = [...frameTimes].sort((a, b) => a - b)
     const descending = [...ascending].reverse()
     const gpu = samples.map((s) => s.sample.gpuMs).filter((v): v is number => v !== null)
+    const cull = samples.map((s) => s.sample.cullMs).filter((v): v is number => v !== null)
     const total = frameTimes.reduce((a, b) => a + b, 0)
     const col = (pick: (s: FrameSample) => number) => samples.map((s) => pick(s.sample))
 
@@ -290,6 +292,7 @@ export class BenchmarkRunner {
       avgUpdateMs: mean(col((s) => s.updateMs)),
       avgRenderMs: mean(col((s) => s.renderMs)),
       avgGpuMs: gpu.length > 0 ? mean(gpu) : null,
+      avgCullGpuMs: cull.length > 0 ? mean(cull) : null,
       avgTriangles: mean(col((s) => s.triangles)),
       avgDrawCalls: mean(col((s) => s.drawCalls)),
       avgSelectedCells: mean(col((s) => s.selectedCells)),
@@ -320,14 +323,16 @@ export class BenchmarkRunner {
 
   /** Averages the frames into fixed time slices, so a run is a few KB however long it was or fast it ran. */
   private bin(durationSec: number): BenchmarkBin[] {
-    type Acc = { n: number; gpuN: number; bin: BenchmarkBin }
+    type Acc = { n: number; gpuN: number; cullN: number; bin: BenchmarkBin }
     const accs: Acc[] = Array.from({ length: BIN_COUNT }, () => ({
       n: 0,
       gpuN: 0,
+      cullN: 0,
       bin: {
         frameMs: 0,
         frameMsMax: 0,
         gpuMs: 0,
+        cullMs: 0,
         updateMs: 0,
         renderMs: 0,
         triangles: 0,
@@ -348,6 +353,10 @@ export class BenchmarkRunner {
         b.gpuMs = (b.gpuMs ?? 0) + sample.gpuMs
         acc.gpuN++
       }
+      if (sample.cullMs !== null) {
+        b.cullMs = (b.cullMs ?? 0) + sample.cullMs
+        acc.cullN++
+      }
       b.updateMs += sample.updateMs
       b.renderMs += sample.renderMs
       b.triangles += sample.triangles
@@ -359,7 +368,7 @@ export class BenchmarkRunner {
 
     // A bin that caught no frame (a long hitch) repeats the previous one, so charts stay continuous.
     const bins: BenchmarkBin[] = []
-    for (const { n, gpuN, bin } of accs) {
+    for (const { n, gpuN, cullN, bin } of accs) {
       if (n === 0) {
         bins.push(bins.length > 0 ? { ...bins[bins.length - 1] } : { ...bin })
         continue
@@ -369,6 +378,7 @@ export class BenchmarkRunner {
         frameMs: round(bin.frameMs / n),
         frameMsMax: round(bin.frameMsMax),
         gpuMs: gpuN > 0 ? round((bin.gpuMs ?? 0) / gpuN) : null,
+        cullMs: cullN > 0 ? Math.round(((bin.cullMs ?? 0) / cullN) * 1000) / 1000 : null,
         updateMs: round(bin.updateMs / n),
         renderMs: round(bin.renderMs / n),
         triangles: Math.round(bin.triangles / n),

@@ -1,25 +1,20 @@
 import type { PerspectiveCamera } from 'three'
-import { WebGPURenderer } from 'three/webgpu'
+import type { GpuRenderer } from './gpu/renderer'
 
 interface ResizeConfig {
   container: HTMLElement
   camera: PerspectiveCamera
-  renderer: WebGPURenderer
+  gpu: GpuRenderer
 }
 
-export const setupResizeHandler = ({
-  container,
-  camera,
-  renderer,
-}: ResizeConfig): void => {
+export const setupResizeHandler = ({ container, camera, gpu }: ResizeConfig): void => {
   const onResize = () => {
-    const { clientWidth, clientHeight } = container
-    const width = Math.max(clientWidth, 1)
-    const height = Math.max(clientHeight, 1)
+    const width = Math.max(container.clientWidth, 1)
+    const height = Math.max(container.clientHeight, 1)
 
     camera.aspect = width / height
     camera.updateProjectionMatrix()
-    renderer.setSize(width, height, false)
+    gpu.resize(width, height, Math.min(window.devicePixelRatio, 2))
   }
 
   window.addEventListener('resize', onResize)

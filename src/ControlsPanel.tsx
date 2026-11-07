@@ -3,6 +3,8 @@ import { Leva, folder, monitor, useControls } from 'leva'
 import type { OrthographicCamera } from 'three'
 import type { PerfSnapshot } from './performance'
 import type { CadSettings, CadStats } from './cad/types'
+import type { BoxView } from './gpu/renderer'
+import { CULLING_MODES, cullingConfig, usesFrustum } from './cad/cullingHooks'
 
 const MB = 2 ** 20
 
@@ -10,6 +12,7 @@ interface ControlsPanelProps {
   perfRef: { current: PerfSnapshot }
   topCameraRef: { current: OrthographicCamera | null }
   topViewConfigRef: { current: { enabled: boolean } }
+  boxViewRef: { current: { view: BoxView; onTop: boolean } }
   cadSettings: CadSettings
   cadStats: CadStats
 }
@@ -24,7 +27,7 @@ const count = (n: number) => (n >= 1e6 ? `${(n / 1e6).toFixed(2)} M` : n >= 1e4 
 
 const PANEL_REFRESH_MS = 250
 
-export const ControlsPanel = ({ perfRef, topCameraRef, topViewConfigRef, cadSettings, cadStats }: ControlsPanelProps) => {
+export const ControlsPanel = ({ perfRef, topCameraRef, topViewConfigRef, boxViewRef, cadSettings, cadStats }: ControlsPanelProps) => {
   const [, setPerf] = useControls(
     'Performance',
     () => ({
@@ -41,15 +44,14 @@ export const ControlsPanel = ({ perfRef, topCameraRef, topViewConfigRef, cadSett
         {
           updateTime: readout(),
           renderTime: readout(),
-          minimapTime: readout(),
         },
         { collapsed: true },
       ),
       'Main view': folder({
         drawCalls: readout(),
         triangles: readout(),
-        linesPoints: readout(),
-        minimapPass: readout(),
+        culled: readout(),
+        cullPass: readout(),
       }),
       HLOD: folder({
         dataset: readout(),
@@ -62,11 +64,6 @@ export const ControlsPanel = ({ perfRef, topCameraRef, topViewConfigRef, cadSett
       Memory: folder(
         {
           gpuTotal: readout(),
-          gpuTextures: readout(),
-          gpuGeometry: readout(),
-          geometries: readout(),
-          textures: readout(),
-          programs: readout(),
           jsHeap: readout(),
         },
         { collapsed: true },
@@ -89,11 +86,12 @@ export const ControlsPanel = ({ perfRef, topCameraRef, topViewConfigRef, cadSett
         worstFrame: ms(p.worstFrameMs),
         updateTime: ms(p.updateMs),
         renderTime: ms(p.renderMs),
-        minimapTime: ms(p.minimapMs),
-        drawCalls: int(p.drawCalls),
+        drawCalls: `${int(p.drawCalls)} visible / ${int(p.issuedDraws)} issued`,
         triangles: count(p.triangles),
-        linesPoints: `${int(p.lines)} / ${int(p.points)}`,
-        minimapPass: `${int(p.minimapDrawCalls)} calls · ${count(p.minimapTriangles)} tris`,
+        culled: `${int(Math.max(0, p.selectedDraws - p.drawCalls))} of ${int(p.selectedDraws)} selected (${
+          p.selectedDraws > 0 ? ((Math.max(0, p.selectedDraws - p.drawCalls) / p.selectedDraws) * 100).toFixed(0) : '0'
+        }%)`,
+        cullPass: p.cullGpuMs > 0 ? `${p.cullGpuMs.toFixed(3)} ms GPU` : 'n/a',
         dataset: `${count(c.datasetCells)} cells · ${count(c.datasetTriangles)} tris`,
         selected: `${int(c.selectedCells)} cells · ${count(c.selectedTriangles)} tris`,
         drawnByTier: `${int(c.cellsRaw)} raw · ${int(c.cellsLod1)} lod1 · ${int(c.cellsLod2)} lod2`,
@@ -101,11 +99,6 @@ export const ControlsPanel = ({ perfRef, topCameraRef, topViewConfigRef, cadSett
         loads: `${int(c.pendingLoads)} pending · ${int(c.failedLoads)} failed`,
         visited: int(c.visitedCells),
         gpuTotal: mb(p.gpuTotalBytes),
-        gpuTextures: mb(p.gpuTexturesBytes),
-        gpuGeometry: mb(p.gpuGeometryBytes),
-        geometries: int(p.geometries),
-        textures: int(p.textures),
-        programs: int(p.programs),
         jsHeap: p.jsHeapBytes === null ? 'n/a' : mb(p.jsHeapBytes),
       })
     }
@@ -148,6 +141,32 @@ export const ControlsPanel = ({ perfRef, topCameraRef, topViewConfigRef, cadSett
     cadSettings.maxResidentMB = cadValues.maxResidentMB
     cadSettings.frozen = cadValues.frozen
   }, [cadValues, cadSettings])
+
+  const [cullingValues, setCulling] = useControls('Culling', () => ({
+    technique: readout(),
+    freezeFrustum: { value: cullingConfig.freeze, label: 'freeze culling frustum' },
+    boxView: {
+      value: boxViewRef.current.view,
+      options: { Off: 'off', 'Drawn cells': 'drawn', 'Selected (drawn + culled)': 'selected', 'All resident': 'resident' } satisfies Record<string, BoxView>,
+      label: 'bounding boxes',
+    },
+    boxesOnTop: { value: boxViewRef.current.onTop, label: 'boxes on top' },
+  }))
+
+  // The technique is chosen in the Benchmark panel; showing it here makes it obvious when the GPU test is off.
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      const label = CULLING_MODES.find((m) => m.id === cullingConfig.mode)?.label ?? cullingConfig.mode
+      setCulling({ technique: usesFrustum(cullingConfig.mode) ? `${label} (frustum test ON)` : `${label} (frustum test OFF)` })
+    }, PANEL_REFRESH_MS)
+    return () => window.clearInterval(id)
+  }, [setCulling])
+
+  useEffect(() => {
+    cullingConfig.freeze = cullingValues.freezeFrustum
+    boxViewRef.current.view = cullingValues.boxView as BoxView
+    boxViewRef.current.onTop = cullingValues.boxesOnTop
+  }, [cullingValues, boxViewRef])
 
   return (
     <Leva

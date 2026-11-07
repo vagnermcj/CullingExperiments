@@ -9,8 +9,10 @@ export const CULLING_MODES: { id: CullingMode; label: string }[] = [
   { id: 'frustum+occlusion', label: 'Frustum + occlusion' },
 ]
 
-/** The active scenario. Set from the benchmark panel; your techniques should branch on it. */
-export const cullingConfig: { mode: CullingMode } = { mode: 'none' }
+/** The active scenario (set from the benchmark panel) and the debug freeze of the culling frustum. */
+export const cullingConfig: { mode: CullingMode; freeze: boolean } = { mode: 'frustum', freeze: false }
+
+export const usesFrustum = (mode: CullingMode): boolean => mode === 'frustum' || mode === 'frustum+occlusion'
 
 // Plug points for the culling techniques. Both are pass-through, so the selected HLOD is drawn as is.
 

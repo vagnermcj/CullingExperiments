@@ -2,7 +2,7 @@ import * as THREE from 'three'
 import { CellDecodePool } from './cellDecodePool'
 import { beginFrame, isCellVisible } from './cullingHooks'
 import { Hierarchy, type TierRange } from './hierarchy'
-import type { CadLoadProgress, CadMetadata, CadSettings, CadStats, DecodedCell, GeometryTier } from './types'
+import type { CadLoadProgress, CadMetadata, CadSettings, CadStats, CellSink, DecodedCell, GeometryTier } from './types'
 
 const MAX_CONCURRENT_FETCHES = 6
 const ABANDON_MS = 2000
@@ -18,7 +18,7 @@ export const createDefaultSettings = (): CadSettings => ({
   minScreenPixels: 5,
   lod2BelowPixels: 25,
   lod1BelowPixels: 80,
-  maxResidentMB: 1500,
+  maxResidentMB: 1000,
   frozen: false,
 })
 
@@ -41,7 +41,8 @@ export const createEmptyStats = (): CadStats => ({
 interface CellState {
   index: number
   hasGeometry: boolean
-  mesh: THREE.Mesh | null
+  /** Slot in the cell sink holding the resident geometry, or -1. */
+  slot: number
   tier: GeometryTier | null
   triangles: number
   bytes: number
@@ -163,7 +164,6 @@ const guessRecordSize = (totalBytes: number): number => {
 }
 
 export class CadModel {
-  readonly group = new THREE.Group()
   /** Mutated by the control panel; read every frame. */
   readonly settings: CadSettings
   readonly stats: CadStats
@@ -173,12 +173,7 @@ export class CadModel {
   private readonly hierarchy: Hierarchy
   private readonly urls: Record<GeometryTier, string | null>
   private readonly tierRatio: Record<GeometryTier, number>
-  private readonly material = new THREE.MeshStandardMaterial({
-    vertexColors: true,
-    side: THREE.DoubleSide,
-    metalness: 0.2,
-    roughness: 0.7,
-  })
+  private readonly sink: CellSink
   private readonly decoder = new CellDecodePool()
   private readonly states = new Map<number, CellState>()
   private readonly heap = new MaxHeap()
@@ -197,8 +192,9 @@ export class CadModel {
   private residentTriangles = 0
   private residentCells = 0
 
-  constructor(metadata: CadMetadata, hierarchy: Hierarchy, baseUrl: string, settings: CadSettings, stats: CadStats) {
+  constructor(metadata: CadMetadata, hierarchy: Hierarchy, baseUrl: string, settings: CadSettings, stats: CadStats, sink: CellSink) {
     this.metadata = metadata
+    this.sink = sink
     this.hierarchy = hierarchy
     this.settings = settings
     this.stats = stats
@@ -227,7 +223,6 @@ export class CadModel {
     this.states.clear()
     this.pending.length = 0
     this.decoder.dispose()
-    this.material.dispose()
   }
 
   private tierAvailable(index: number, tier: GeometryTier): boolean {
@@ -260,7 +255,7 @@ export class CadModel {
   }
 
   private satisfies(state: CellState, wanted: GeometryTier): boolean {
-    return state.mesh !== null && state.tier !== null && TIER_RANK[state.tier] <= TIER_RANK[wanted]
+    return state.slot >= 0 && state.tier !== null && TIER_RANK[state.tier] <= TIER_RANK[wanted]
   }
 
   private getState(index: number): CellState {
@@ -269,7 +264,7 @@ export class CadModel {
       state = {
         index,
         hasGeometry: this.hierarchy.tierRange(index, 'raw', this.scratchRange).size > 0,
-        mesh: null,
+        slot: -1,
         tier: null,
         triangles: 0,
         bytes: 0,
@@ -339,11 +334,12 @@ export class CadModel {
       }
     }
 
+    // The GPU culling pass draws the cells flagged here (minus what it culls).
     for (const state of this.drawn) {
-      if (state.selectedFrame !== frame && state.mesh) state.mesh.visible = false
+      if (state.selectedFrame !== frame && state.slot >= 0) this.sink.setSelected(state.slot, false)
     }
     for (const state of selected) {
-      if (state.mesh) state.mesh.visible = true
+      if (state.slot >= 0) this.sink.setSelected(state.slot, true)
       if (state.hasGeometry && !this.satisfies(state, state.wanted)) this.requestLoad(state)
     }
     this.drawn = selected
@@ -415,45 +411,33 @@ export class CadModel {
   }
 
   private install(state: CellState, tier: GeometryTier, cell: DecodedCell): void {
-    const geometry = new THREE.BufferGeometry()
-    geometry.setAttribute('position', new THREE.BufferAttribute(cell.positions, 3))
-    // 4-byte normals/colors: WebGPU has no 3-component 8-bit vertex formats.
-    geometry.setAttribute('normal', new THREE.BufferAttribute(cell.normals, 4, true))
-    geometry.setAttribute('color', new THREE.BufferAttribute(cell.colors, 4, true))
-    geometry.setIndex(new THREE.BufferAttribute(cell.indices, 1))
-    const [x0, y0, z0, x1, y1, z1] = cell.box
-    geometry.boundingBox = new THREE.Box3(new THREE.Vector3(x0, y0, z0), new THREE.Vector3(x1, y1, z1))
-    geometry.boundingSphere = geometry.boundingBox.getBoundingSphere(new THREE.Sphere())
+    const slot = this.sink.addCell(cell)
+    if (slot < 0) throw new Error('GPU cell store is full')
 
-    const mesh = new THREE.Mesh(geometry, this.material)
-    mesh.frustumCulled = false
-    mesh.matrixAutoUpdate = false
-    mesh.visible = state.selectedFrame === this.frame
-
+    // The old geometry (another tier of the same cell) is released only once the new one is in.
     this.release(state)
-    state.mesh = mesh
+    state.slot = slot
     state.tier = tier
     state.triangles = cell.indices.length / 3
-    state.bytes = (cell.positions.byteLength + cell.normals.byteLength + cell.colors.byteLength + cell.indices.byteLength) * 2
+    state.bytes = cell.positions.byteLength + cell.normals.byteLength + cell.colors.byteLength + cell.indices.byteLength
     state.failures = 0
     state.retryAt = 0
     this.failed.delete(state)
-    this.group.add(mesh)
+    this.sink.setSelected(slot, state.selectedFrame === this.frame)
     this.residentBytes += state.bytes
     this.residentTriangles += state.triangles
     this.residentCells++
   }
 
-  /** Removes the cell's resident mesh, if any. */
+  /** Frees the cell's resident geometry, if any. */
   private release(state: CellState): void {
     this.cancelLoad(state)
-    if (!state.mesh) return
-    this.group.remove(state.mesh)
-    state.mesh.geometry.dispose()
+    if (state.slot < 0) return
+    this.sink.removeCell(state.slot)
     this.residentBytes -= state.bytes
     this.residentTriangles -= state.triangles
     this.residentCells--
-    state.mesh = null
+    state.slot = -1
     state.tier = null
     state.triangles = 0
     state.bytes = 0
@@ -464,7 +448,7 @@ export class CadModel {
     const cap = this.settings.maxResidentMB * MB
     if (this.residentBytes <= cap) return
     const candidates: CellState[] = []
-    for (const state of this.states.values()) if (state.mesh && state.selectedFrame !== frame) candidates.push(state)
+    for (const state of this.states.values()) if (state.slot >= 0 && state.selectedFrame !== frame) candidates.push(state)
     candidates.sort((a, b) => a.selectedFrame - b.selectedFrame)
     for (const state of candidates) {
       if (this.residentBytes <= cap) break
@@ -490,7 +474,7 @@ export class CadModel {
     let lod1 = 0
     let lod2 = 0
     for (const state of this.selected) {
-      if (!state.mesh) continue
+      if (state.slot < 0) continue
       if (state.tier === 'raw') raw++
       else if (state.tier === 'lod1') lod1++
       else lod2++
@@ -511,6 +495,7 @@ export const loadCadModel = async (
   baseUrl: string,
   settings: CadSettings,
   stats: CadStats,
+  sink: CellSink,
   onProgress: (progress: CadLoadProgress) => void,
 ): Promise<CadModel> => {
   onProgress({ phase: 'metadata', loaded: 0, total: 0 })
@@ -528,5 +513,5 @@ export const loadCadModel = async (
   const hierarchy = new Hierarchy(buffer, metadata.hierarchy.recordSize ?? guessRecordSize(buffer.byteLength))
 
   onProgress({ phase: 'ready', loaded: 1, total: 1 })
-  return new CadModel(metadata, hierarchy, baseUrl, settings, stats)
+  return new CadModel(metadata, hierarchy, baseUrl, settings, stats, sink)
 }

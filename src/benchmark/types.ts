@@ -13,6 +13,8 @@ export interface BenchmarkBin {
   frameMs: number
   frameMsMax: number
   gpuMs: number | null
+  /** GPU time of the culling pass alone. */
+  cullMs: number | null
   updateMs: number
   renderMs: number
   triangles: number
@@ -38,6 +40,7 @@ export interface BenchmarkSummary {
   avgUpdateMs: number
   avgRenderMs: number
   avgGpuMs: number | null
+  avgCullGpuMs: number | null
   avgTriangles: number
   avgDrawCalls: number
   avgSelectedCells: number
@@ -71,6 +74,7 @@ export interface BenchmarkRun {
 export interface FrameSample {
   frameMs: number
   gpuMs: number | null
+  cullMs: number | null
   updateMs: number
   renderMs: number
   triangles: number

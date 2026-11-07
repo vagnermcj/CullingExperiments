@@ -18,14 +18,23 @@ export type GeometryTier = 'raw' | 'lod1' | 'lod2'
 
 /** A cell chunk decoded to typed arrays (no three.js types, so it can cross a worker boundary). */
 export interface DecodedCell {
-  positions: Float32Array
+  positions: Float32Array<ArrayBuffer>
   /** Signed normalized, 4 bytes per vertex (the 4th is padding). */
-  normals: Int8Array
+  normals: Int8Array<ArrayBuffer>
   /** Unsigned normalized RGBA, 4 bytes per vertex. */
-  colors: Uint8Array
-  indices: Uint32Array
+  colors: Uint8Array<ArrayBuffer>
+  indices: Uint32Array<ArrayBuffer>
   /** min x, y, z, max x, y, z of the vertices. */
   box: [number, number, number, number, number, number]
+}
+
+/** Where decoded cells go; the GPU cell store implements it. */
+export interface CellSink {
+  /** Uploads a cell and returns its slot, or -1 when the sink is full. */
+  addCell(cell: DecodedCell): number
+  removeCell(slot: number): void
+  /** Whether the HLOD selection wants the cell drawn this frame. */
+  setSelected(slot: number, selected: boolean): void
 }
 
 export interface CadLoadProgress {

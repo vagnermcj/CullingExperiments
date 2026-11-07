@@ -11,6 +11,7 @@ const SERIES_COLORS = ['#5ec8ff', '#ffb347', '#7be495', '#d58bff', '#ff7b8a', '#
 const METRICS: { id: BenchmarkMetric; label: string }[] = [
   { id: 'frameMs', label: 'Frame time (ms)' },
   { id: 'gpuMs', label: 'GPU time (ms)' },
+  { id: 'cullMs', label: 'GPU culling pass (ms)' },
   { id: 'updateMs', label: 'CPU update (ms)' },
   { id: 'renderMs', label: 'CPU render (ms)' },
   { id: 'triangles', label: 'Triangles' },
@@ -32,6 +33,7 @@ const SUMMARY_ROWS: { label: string; value: (s: BenchmarkSummary) => string }[] 
   { label: 'Frame time p95 / p99', value: (s) => `${fixed(s.p95FrameMs, 2)} / ${fixed(s.p99FrameMs, 2)} ms` },
   { label: 'Frame time max', value: (s) => `${fixed(s.maxFrameMs, 2)} ms` },
   { label: 'GPU time avg', value: (s) => (s.avgGpuMs === null ? 'n/a' : `${fixed(s.avgGpuMs, 2)} ms`) },
+  { label: 'GPU culling pass avg', value: (s) => (s.avgCullGpuMs == null ? 'n/a' : `${fixed(s.avgCullGpuMs, 3)} ms`) },
   { label: 'CPU update / render', value: (s) => `${fixed(s.avgUpdateMs, 2)} / ${fixed(s.avgRenderMs, 2)} ms` },
   { label: 'Triangles / draw calls', value: (s) => `${compact(s.avgTriangles)} / ${compact(s.avgDrawCalls)}` },
   { label: 'Selected cells', value: (s) => compact(s.avgSelectedCells) },
@@ -121,7 +123,7 @@ const MetricSelect = ({ value, onChange }: { value: BenchmarkMetric; onChange: (
 
 const RunDetails = ({ run }: { run: BenchmarkRun }) => {
   const [metric, setMetric] = useState<BenchmarkMetric>('frameMs')
-  const series: ChartSeries[] = [{ label: METRICS.find((m) => m.id === metric)!.label, color: SERIES_COLORS[0], values: run.bins.map((b) => b[metric]) }]
+  const series: ChartSeries[] = [{ label: METRICS.find((m) => m.id === metric)!.label, color: SERIES_COLORS[0], values: run.bins.map((b) => b[metric] ?? null) }]
   if (metric === 'frameMs') series.push({ label: 'worst frame in slice', color: SERIES_COLORS[1], values: run.bins.map((b) => b.frameMsMax), faint: true })
   const s = run.summary
 
@@ -240,7 +242,7 @@ const History = ({ runs, onClose }: { runs: BenchmarkRun[]; onClose: () => void 
   const series: ChartSeries[] = compared.map((run, i) => ({
     label: run.label,
     color: SERIES_COLORS[i % SERIES_COLORS.length],
-    values: run.bins.map((b) => b[metric]),
+    values: run.bins.map((b) => b[metric] ?? null),
   }))
 
   return (

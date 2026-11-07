@@ -1,4 +1,4 @@
-import type { WebGPURenderer } from 'three/webgpu'
+import type { GpuFrameStats } from './gpu/renderer'
 
 // Ring buffer length for frame-time percentiles (~10 s at 60 FPS).
 const FRAME_WINDOW = 600
@@ -6,7 +6,7 @@ const FRAME_WINDOW = 600
 const FPS_WINDOW_MS = 1000
 // Percentiles and memory counters are sampled instead of run every frame.
 const SAMPLE_MS = 250
-// Smoothing factor for CPU timings.
+// Smoothing factor for CPU and GPU timings.
 const EMA_ALPHA = 0.1
 
 export interface PerfSnapshot {
@@ -19,24 +19,16 @@ export interface PerfSnapshot {
   // CPU timing per frame (ms, smoothed)
   updateMs: number
   renderMs: number
-  minimapMs: number
-  // GPU time of the render pass (ms, smoothed); 0 when timestamp queries are unsupported
+  // GPU time (ms, smoothed); 0 when timestamp queries are unsupported
   gpuMs: number
-  // Main camera pass
+  cullGpuMs: number
+  // Draws that survived culling, and what the culling decided (GPU counters, a frame or two late)
   drawCalls: number
   triangles: number
-  lines: number
-  points: number
-  // Minimap pass (extra cost of the top view)
-  minimapDrawCalls: number
-  minimapTriangles: number
+  selectedDraws: number
+  issuedDraws: number
   // Memory
   gpuTotalBytes: number
-  gpuTexturesBytes: number
-  gpuGeometryBytes: number
-  geometries: number
-  textures: number
-  programs: number
   jsHeapBytes: number | null
 }
 
@@ -48,41 +40,36 @@ export const createEmptySnapshot = (): PerfSnapshot => ({
   fps01Low: 0,
   updateMs: 0,
   renderMs: 0,
-  minimapMs: 0,
   gpuMs: 0,
+  cullGpuMs: 0,
   drawCalls: 0,
   triangles: 0,
-  lines: 0,
-  points: 0,
-  minimapDrawCalls: 0,
-  minimapTriangles: 0,
+  selectedDraws: 0,
+  issuedDraws: 0,
   gpuTotalBytes: 0,
-  gpuTexturesBytes: 0,
-  gpuGeometryBytes: 0,
-  geometries: 0,
-  textures: 0,
-  programs: 0,
   jsHeapBytes: null,
 })
 
-interface PassStats {
-  drawCalls: number
-  triangles: number
-  lines: number
-  points: number
+export interface GpuStatsSource {
+  readonly stats: GpuFrameStats
+  readonly timestamps: boolean
 }
 
 /**
- * Collects frame timing, renderer counters and memory usage.
+ * Collects frame timing, GPU counters and memory usage.
  *
  * Usage per frame:
- *   perf.beginFrame(); ...update...; perf.markUpdateDone(); ...render main...;
- *   perf.markMainDone(); ...render minimap...; perf.endFrame().
+ *   perf.beginFrame(); ...update...; perf.markUpdateDone(); ...render...; perf.markMainDone(); perf.endFrame().
  */
 export class PerformanceMonitor {
   readonly snapshot: PerfSnapshot = createEmptySnapshot()
-  /** Unsmoothed values of the last finished frame; `gpuMs` lags by a frame or two (async readback) and is null without timestamp queries. */
-  readonly latest: { updateMs: number; renderMs: number; gpuMs: number | null } = { updateMs: 0, renderMs: 0, gpuMs: null }
+  /** Unsmoothed values of the last finished frame; GPU values lag by a frame or two (async readback) and are null without timestamp queries. */
+  readonly latest: { updateMs: number; renderMs: number; gpuMs: number | null; cullMs: number | null } = {
+    updateMs: 0,
+    renderMs: 0,
+    gpuMs: null,
+    cullMs: null,
+  }
   readonly gpuTiming: boolean
 
   private readonly frameTimes = new Float32Array(FRAME_WINDOW)
@@ -93,18 +80,14 @@ export class PerformanceMonitor {
   private frameStart = 0
   private updateDone = 0
   private mainDone = 0
-  private mainPass: PassStats = { drawCalls: 0, triangles: 0, lines: 0, points: 0 }
 
   private lastPublish = 0
 
-  private readonly renderer: WebGPURenderer
+  private readonly source: GpuStatsSource
 
-  constructor(renderer: WebGPURenderer) {
-    this.renderer = renderer
-    this.gpuTiming = renderer.hasFeature('timestamp-query')
-    // The renderer is driven from our own rAF loop and renders twice per frame
-    // (main + minimap), so counters must be reset manually to be meaningful.
-    renderer.info.autoReset = false
+  constructor(source: GpuStatsSource) {
+    this.source = source
+    this.gpuTiming = source.timestamps
   }
 
   beginFrame(): void {
@@ -118,58 +101,46 @@ export class PerformanceMonitor {
     }
     this.lastFrameStart = now
     this.frameStart = now
-    this.renderer.info.reset()
   }
 
   markUpdateDone(): void {
     this.updateDone = performance.now()
   }
 
-  /** Call right after the main camera render; captures its counters before the minimap pass adds to them. */
+  /** Call right after the render call has submitted its work. */
   markMainDone(): void {
     this.mainDone = performance.now()
-    const r = this.renderer.info.render
-    this.mainPass = { drawCalls: r.drawCalls, triangles: r.triangles, lines: r.lines, points: r.points }
   }
 
-  endFrame(minimapRendered: boolean): void {
+  endFrame(): void {
     const now = performance.now()
     const s = this.snapshot
-    const r = this.renderer.info.render
+    const g = this.source.stats
 
     const smooth = (prev: number, next: number) => (prev === 0 ? next : prev + (next - prev) * EMA_ALPHA)
     this.latest.updateMs = this.updateDone - this.frameStart
     this.latest.renderMs = this.mainDone - this.updateDone
     s.updateMs = smooth(s.updateMs, this.latest.updateMs)
     s.renderMs = smooth(s.renderMs, this.latest.renderMs)
-    s.minimapMs = minimapRendered ? smooth(s.minimapMs, now - this.mainDone) : 0
 
-    s.drawCalls = this.mainPass.drawCalls
-    s.triangles = this.mainPass.triangles
-    s.lines = this.mainPass.lines
-    s.points = this.mainPass.points
-    s.minimapDrawCalls = minimapRendered ? r.drawCalls - this.mainPass.drawCalls : 0
-    s.minimapTriangles = minimapRendered ? r.triangles - this.mainPass.triangles : 0
+    this.latest.gpuMs = g.gpuMs
+    this.latest.cullMs = g.cullMs
+    if (g.gpuMs !== null) s.gpuMs = smooth(s.gpuMs, g.gpuMs)
+    if (g.cullMs !== null) s.cullGpuMs = smooth(s.cullGpuMs, g.cullMs)
 
-    if (this.gpuTiming) this.resolveGpuTime()
+    s.drawCalls = g.visibleDraws
+    s.triangles = g.visibleTriangles
+    s.selectedDraws = g.selectedDraws
+    s.issuedDraws = g.issuedDraws
+    s.gpuTotalBytes = g.gpuBytes
 
     if (now - this.lastPublish >= SAMPLE_MS) {
       this.lastPublish = now
       this.computeFrameStats()
-      this.sampleMemory()
+      // Chromium-only, non-standard.
+      const mem = (performance as unknown as { memory?: { usedJSHeapSize: number } }).memory
+      s.jsHeapBytes = mem ? mem.usedJSHeapSize : null
     }
-  }
-
-  /** Resolves the render-pass timestamps of the latest frame; a request already in flight is shared. */
-  private resolveGpuTime(): void {
-    this.renderer
-      .resolveTimestampsAsync('render')
-      .then((ms) => {
-        if (typeof ms !== 'number' || ms <= 0) return
-        this.latest.gpuMs = ms
-        this.snapshot.gpuMs = this.snapshot.gpuMs === 0 ? ms : this.snapshot.gpuMs + (ms - this.snapshot.gpuMs) * EMA_ALPHA
-      })
-      .catch(() => {})
   }
 
   private computeFrameStats(): void {
@@ -197,19 +168,5 @@ export class PerformanceMonitor {
     s.worstFrameMs = sorted[0]
     s.fps1Low = lowFps(0.01)
     s.fps01Low = lowFps(0.001)
-  }
-
-  private sampleMemory(): void {
-    const s = this.snapshot
-    const m = this.renderer.info.memory
-    s.gpuTotalBytes = m.total
-    s.gpuTexturesBytes = m.texturesSize
-    s.gpuGeometryBytes = m.attributesSize + m.indexAttributesSize
-    s.geometries = m.geometries
-    s.textures = m.textures
-    s.programs = m.programs
-    // Chromium-only, non-standard.
-    const mem = (performance as unknown as { memory?: { usedJSHeapSize: number } }).memory
-    s.jsHeapBytes = mem ? mem.usedJSHeapSize : null
   }
 }

@@ -23,19 +23,35 @@ const METRICS: { id: BenchmarkMetric; label: string }[] = [
 
 const scenarioLabel = (mode: CullingMode) => CULLING_MODES.find((m) => m.id === mode)?.label ?? mode
 const fixed = (n: number | null, digits = 1) => (n === null ? 'n/a' : n.toFixed(digits))
-const compact = (n: number) => (n >= 1e6 ? `${(n / 1e6).toFixed(2)} M` : n >= 1e3 ? `${(n / 1e3).toFixed(1)} k` : n.toFixed(0))
+const compact = (n: number) =>
+  n >= 1e6 ? `${(n / 1e6).toFixed(2)} M` : n >= 1e3 ? `${(n / 1e3).toFixed(1)} k` : n.toFixed(0)
 
 const SUMMARY_ROWS: { label: string; value: (s: BenchmarkSummary) => string }[] = [
   { label: 'Average FPS', value: (s) => fixed(s.avgFps) },
   { label: '1% low FPS', value: (s) => fixed(s.fps1Low) },
   { label: '0.1% low FPS', value: (s) => fixed(s.fps01Low) },
   { label: 'Frame time avg', value: (s) => `${fixed(s.avgFrameMs, 2)} ms` },
-  { label: 'Frame time p95 / p99', value: (s) => `${fixed(s.p95FrameMs, 2)} / ${fixed(s.p99FrameMs, 2)} ms` },
+  {
+    label: 'Frame time p95 / p99',
+    value: (s) => `${fixed(s.p95FrameMs, 2)} / ${fixed(s.p99FrameMs, 2)} ms`,
+  },
   { label: 'Frame time max', value: (s) => `${fixed(s.maxFrameMs, 2)} ms` },
-  { label: 'GPU time avg', value: (s) => (s.avgGpuMs === null ? 'n/a' : `${fixed(s.avgGpuMs, 2)} ms`) },
-  { label: 'GPU culling pass avg', value: (s) => (s.avgCullGpuMs == null ? 'n/a' : `${fixed(s.avgCullGpuMs, 3)} ms`) },
-  { label: 'CPU update / render', value: (s) => `${fixed(s.avgUpdateMs, 2)} / ${fixed(s.avgRenderMs, 2)} ms` },
-  { label: 'Triangles / draw calls', value: (s) => `${compact(s.avgTriangles)} / ${compact(s.avgDrawCalls)}` },
+  {
+    label: 'GPU time avg',
+    value: (s) => (s.avgGpuMs === null ? 'n/a' : `${fixed(s.avgGpuMs, 2)} ms`),
+  },
+  {
+    label: 'GPU culling pass avg',
+    value: (s) => (s.avgCullGpuMs == null ? 'n/a' : `${fixed(s.avgCullGpuMs, 3)} ms`),
+  },
+  {
+    label: 'CPU update / render',
+    value: (s) => `${fixed(s.avgUpdateMs, 2)} / ${fixed(s.avgRenderMs, 2)} ms`,
+  },
+  {
+    label: 'Triangles / draw calls',
+    value: (s) => `${compact(s.avgTriangles)} / ${compact(s.avgDrawCalls)}`,
+  },
   { label: 'Selected cells', value: (s) => compact(s.avgSelectedCells) },
   { label: 'Peak resident', value: (s) => `${compact(s.peakResidentMB)} MB` },
   { label: 'Frames', value: (s) => `${s.frames} in ${fixed(s.seconds)} s` },
@@ -48,7 +64,15 @@ interface ChartSeries {
   faint?: boolean
 }
 
-const Chart = ({ series, durationSec, unit }: { series: ChartSeries[]; durationSec: number; unit: string }) => {
+const Chart = ({
+  series,
+  durationSec,
+  unit,
+}: {
+  series: ChartSeries[]
+  durationSec: number
+  unit: string
+}) => {
   const W = 640
   const H = 190
   const pad = { l: 46, r: 10, t: 8, b: 22 }
@@ -76,14 +100,26 @@ const Chart = ({ series, durationSec, unit }: { series: ChartSeries[]; durationS
       <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label={`Chart in ${unit}`}>
         {[0, 0.5, 1].map((f) => (
           <g key={f}>
-            <line x1={pad.l} x2={W - pad.r} y1={y(max * f)} y2={y(max * f)} className="bench-grid" />
+            <line
+              x1={pad.l}
+              x2={W - pad.r}
+              y1={y(max * f)}
+              y2={y(max * f)}
+              className="bench-grid"
+            />
             <text x={pad.l - 6} y={y(max * f) + 3} textAnchor="end" className="bench-axis">
               {compact(max * f)}
             </text>
           </g>
         ))}
         {[0, 0.25, 0.5, 0.75, 1].map((f) => (
-          <text key={f} x={pad.l + f * (W - pad.l - pad.r)} y={H - 6} textAnchor="middle" className="bench-axis">
+          <text
+            key={f}
+            x={pad.l + f * (W - pad.l - pad.r)}
+            y={H - 6}
+            textAnchor="middle"
+            className="bench-axis"
+          >
             {`${(durationSec * f).toFixed(0)}s`}
           </text>
         ))}
@@ -111,7 +147,13 @@ const Chart = ({ series, durationSec, unit }: { series: ChartSeries[]; durationS
   )
 }
 
-const MetricSelect = ({ value, onChange }: { value: BenchmarkMetric; onChange: (m: BenchmarkMetric) => void }) => (
+const MetricSelect = ({
+  value,
+  onChange,
+}: {
+  value: BenchmarkMetric
+  onChange: (m: BenchmarkMetric) => void
+}) => (
   <select value={value} onChange={(e) => onChange(e.target.value as BenchmarkMetric)}>
     {METRICS.map((m) => (
       <option key={m.id} value={m.id}>
@@ -123,14 +165,28 @@ const MetricSelect = ({ value, onChange }: { value: BenchmarkMetric; onChange: (
 
 const RunDetails = ({ run }: { run: BenchmarkRun }) => {
   const [metric, setMetric] = useState<BenchmarkMetric>('frameMs')
-  const series: ChartSeries[] = [{ label: METRICS.find((m) => m.id === metric)!.label, color: SERIES_COLORS[0], values: run.bins.map((b) => b[metric] ?? null) }]
-  if (metric === 'frameMs') series.push({ label: 'worst frame in slice', color: SERIES_COLORS[1], values: run.bins.map((b) => b.frameMsMax), faint: true })
+  const series: ChartSeries[] = [
+    {
+      label: METRICS.find((m) => m.id === metric)!.label,
+      color: SERIES_COLORS[0],
+      values: run.bins.map((b) => b[metric] ?? null),
+    },
+  ]
+  if (metric === 'frameMs')
+    series.push({
+      label: 'worst frame in slice',
+      color: SERIES_COLORS[1],
+      values: run.bins.map((b) => b.frameMsMax),
+      faint: true,
+    })
   const s = run.summary
 
   return (
     <>
       <div className="bench-meta">
-        <span className={`bench-badge scenario-${run.scenario.replace('+', '-')}`}>{scenarioLabel(run.scenario)}</span>
+        <span className={`bench-badge scenario-${run.scenario.replace('+', '-')}`}>
+          {scenarioLabel(run.scenario)}
+        </span>
         <span>{new Date(run.createdAt).toLocaleString()}</span>
         <span>{run.system.gpu}</span>
         <span>
@@ -209,9 +265,18 @@ const History = ({ runs, onClose }: { runs: BenchmarkRun[]; onClose: () => void 
   const [metric, setMetric] = useState<BenchmarkMetric>('frameMs')
 
   const gpus = useMemo(() => [...new Set(runs.map((r) => r.system.gpu))], [runs])
-  const visible = runs.filter((r) => (!gpuFilter || r.system.gpu === gpuFilter) && (!scenarioFilter || r.scenario === scenarioFilter))
-  const compared = selected.map((id) => runs.find((r) => r.id === id)).filter((r): r is BenchmarkRun => r !== undefined)
-  const toggle = (id: string) => setSelected((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id].slice(-SERIES_COLORS.length)))
+  const visible = runs.filter(
+    (r) =>
+      (!gpuFilter || r.system.gpu === gpuFilter) &&
+      (!scenarioFilter || r.scenario === scenarioFilter),
+  )
+  const compared = selected
+    .map((id) => runs.find((r) => r.id === id))
+    .filter((r): r is BenchmarkRun => r !== undefined)
+  const toggle = (id: string) =>
+    setSelected((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id].slice(-SERIES_COLORS.length),
+    )
 
   const current = detail ? runs.find((r) => r.id === detail.id) : undefined
   if (current) {
@@ -254,7 +319,10 @@ const History = ({ runs, onClose }: { runs: BenchmarkRun[]; onClose: () => void 
         ) : (
           <>
             <div className="bench-toolbar">
-              <select value={scenarioFilter} onChange={(e) => setScenarioFilter(e.target.value as '' | CullingMode)}>
+              <select
+                value={scenarioFilter}
+                onChange={(e) => setScenarioFilter(e.target.value as '' | CullingMode)}
+              >
                 <option value="">All techniques</option>
                 {CULLING_MODES.map((m) => (
                   <option key={m.id} value={m.id}>
@@ -270,7 +338,9 @@ const History = ({ runs, onClose }: { runs: BenchmarkRun[]; onClose: () => void 
                   </option>
                 ))}
               </select>
-              <span className="bench-hint">Tick runs to compare them (up to {SERIES_COLORS.length}).</span>
+              <span className="bench-hint">
+                Tick runs to compare them (up to {SERIES_COLORS.length}).
+              </span>
             </div>
             <div className="bench-table-wrap">
               <table className="bench-table">
@@ -290,20 +360,32 @@ const History = ({ runs, onClose }: { runs: BenchmarkRun[]; onClose: () => void 
                   {visible.map((run) => (
                     <tr key={run.id}>
                       <td>
-                        <input type="checkbox" checked={selected.includes(run.id)} onChange={() => toggle(run.id)} />
+                        <input
+                          type="checkbox"
+                          checked={selected.includes(run.id)}
+                          onChange={() => toggle(run.id)}
+                        />
                       </td>
                       <td>
-                        <button className="link" onClick={() => setDetail(run)} title={new Date(run.createdAt).toLocaleString()}>
+                        <button
+                          className="link"
+                          onClick={() => setDetail(run)}
+                          title={new Date(run.createdAt).toLocaleString()}
+                        >
                           {run.label}
                         </button>
                       </td>
                       <td>
-                        <span className={`bench-badge scenario-${run.scenario.replace('+', '-')}`}>{scenarioLabel(run.scenario)}</span>
+                        <span className={`bench-badge scenario-${run.scenario.replace('+', '-')}`}>
+                          {scenarioLabel(run.scenario)}
+                        </span>
                       </td>
                       <td className="gpu">{run.system.gpu}</td>
                       <td>{fixed(run.summary.avgFps)}</td>
                       <td>{fixed(run.summary.fps1Low)}</td>
-                      <td>{run.summary.avgGpuMs === null ? 'n/a' : fixed(run.summary.avgGpuMs, 2)}</td>
+                      <td>
+                        {run.summary.avgGpuMs === null ? 'n/a' : fixed(run.summary.avgGpuMs, 2)}
+                      </td>
                       <td>{fixed(run.summary.p99FrameMs, 1)}</td>
                     </tr>
                   ))}
@@ -355,7 +437,8 @@ export const BenchmarkUI = ({ runner }: { runner: BenchmarkRunner }) => {
     return () => window.removeEventListener('keydown', onKey)
   }, [active, runner])
 
-  if (state.phase === 'finished' && state.result) return <Results runner={runner} run={state.result} />
+  if (state.phase === 'finished' && state.result)
+    return <Results runner={runner} run={state.result} />
 
   if (active) {
     const live = state.live
@@ -363,7 +446,8 @@ export const BenchmarkUI = ({ runner }: { runner: BenchmarkRunner }) => {
     return (
       <div className="bench-hud">
         <div className="bench-hud-title">
-          {phaseTitle[state.phase as keyof typeof phaseTitle]} · {scenarioLabel(state.options?.scenario ?? 'none')}
+          {phaseTitle[state.phase as keyof typeof phaseTitle]} ·{' '}
+          {scenarioLabel(state.options?.scenario ?? 'none')}
           {running && state.options && (
             <span>
               {' '}

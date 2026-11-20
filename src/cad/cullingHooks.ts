@@ -10,9 +10,16 @@ export const CULLING_MODES: { id: CullingMode; label: string }[] = [
 ]
 
 /** The active scenario (set from the benchmark panel) and the debug freeze of the culling frustum. */
-export const cullingConfig: { mode: CullingMode; freeze: boolean } = { mode: 'frustum', freeze: false }
+export const cullingConfig: { mode: CullingMode; freeze: boolean } = {
+  mode: 'frustum',
+  freeze: false,
+}
 
-export const usesFrustum = (mode: CullingMode): boolean => mode === 'frustum' || mode === 'frustum+occlusion'
+export const usesFrustum = (mode: CullingMode): boolean =>
+  mode === 'frustum' || mode === 'frustum+occlusion'
+
+export const usesOcclusion = (mode: CullingMode): boolean =>
+  mode === 'occlusion' || mode === 'frustum+occlusion'
 
 // Plug points for the culling techniques. Both are pass-through, so the selected HLOD is drawn as is.
 

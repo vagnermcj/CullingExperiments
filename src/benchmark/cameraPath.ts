@@ -21,15 +21,29 @@ export const createBenchmarkPath = (bounds: THREE.Box3): BenchmarkPath => {
     [new THREE.Vector3(c.x, c.y + size.y * 0.5 + longest * 0.15, max.z + longest * 0.6), c.clone()],
     [at(0.1, c.y + longest * 0.08, max.z + longest * 0.35), at(0.3, c.y, c.z)],
     [at(0.25, c.y + size.y * 0.25, max.z + longest * 0.12), at(0.45, c.y + size.y * 0.1, c.z)],
-    [at(0.45, c.y + size.y * 0.35, c.z + size.z * 0.1), at(0.65, c.y + size.y * 0.2, c.z - size.z * 0.1)],
+    [
+      at(0.45, c.y + size.y * 0.35, c.z + size.z * 0.1),
+      at(0.65, c.y + size.y * 0.2, c.z - size.z * 0.1),
+    ],
     [at(0.6, max.y + longest * 0.25, c.z + size.z * 0.05), at(0.68, c.y, c.z)],
     [at(0.95, c.y + size.y * 0.3, max.z + longest * 0.2), at(0.7, c.y + size.y * 0.1, c.z)],
-    [at(0.75, c.y + size.y * 0.2, min.z - longest * 0.15), new THREE.Vector3(c.x, c.y + size.y * 0.1, c.z)],
+    [
+      at(0.75, c.y + size.y * 0.2, min.z - longest * 0.15),
+      new THREE.Vector3(c.x, c.y + size.y * 0.1, c.z),
+    ],
     [at(0.3, c.y + size.y * 0.4, min.z - longest * 0.2), at(0.5, c.y + size.y * 0.1, c.z)],
   ]
 
-  const positions = new THREE.CatmullRomCurve3(shots.map(([p]) => p), true, 'centripetal')
-  const targets = new THREE.CatmullRomCurve3(shots.map(([, t]) => t), true, 'centripetal')
+  const positions = new THREE.CatmullRomCurve3(
+    shots.map(([p]) => p),
+    true,
+    'centripetal',
+  )
+  const targets = new THREE.CatmullRomCurve3(
+    shots.map(([, t]) => t),
+    true,
+    'centripetal',
+  )
 
   return {
     sample(t, position, target) {

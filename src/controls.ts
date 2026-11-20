@@ -8,7 +8,7 @@ export interface ControlsConfig {
   rollSpeed?: number
 }
 
-export const createControls = ({ 
+export const createControls = ({
   camera,
   domElement,
   movementSpeed = 5,

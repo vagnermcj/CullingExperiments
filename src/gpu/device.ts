@@ -10,9 +10,13 @@ export const requestGpuDevice = async (onLost: (message: string) => void): Promi
   if (!adapter) throw new Error('No WebGPU adapter was found.')
 
   const timestamps = adapter.features.has('timestamp-query')
-  const device = await adapter.requestDevice({ requiredFeatures: timestamps ? ['timestamp-query'] : [] })
+  const device = await adapter.requestDevice({
+    requiredFeatures: timestamps ? ['timestamp-query'] : [],
+  })
 
-  device.addEventListener('uncapturederror', (event) => console.error('[WebGPU]', (event as GPUUncapturedErrorEvent).error.message))
+  device.addEventListener('uncapturederror', (event) =>
+    console.error('[WebGPU]', (event as GPUUncapturedErrorEvent).error.message),
+  )
   void device.lost.then((info) => {
     if (info.reason !== 'destroyed') onLost(info.message || 'The GPU device was lost.')
   })

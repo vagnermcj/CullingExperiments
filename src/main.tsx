@@ -9,8 +9,13 @@ import { createControls } from './controls'
 import { ControlsPanel } from './ControlsPanel'
 import { PerformanceMonitor } from './performance'
 import { GpuRenderer, type BoxView } from './gpu/renderer'
-import { createDefaultSettings, createEmptyStats, loadCadModel, type CadModel } from './cad/cadModel'
-import { cullingConfig, usesFrustum } from './cad/cullingHooks'
+import {
+  createDefaultSettings,
+  createEmptyStats,
+  loadCadModel,
+  type CadModel,
+} from './cad/cadModel'
+import { cullingConfig, usesFrustum, usesOcclusion } from './cad/cullingHooks'
 import { BenchmarkRunner } from './benchmark/benchmarkRunner'
 import { BenchmarkUI } from './benchmark/BenchmarkUI'
 import { detectGpuName } from './benchmark/system'
@@ -34,7 +39,9 @@ const showStatus = (text: string, isError = false) => {
 const hud = initHud()
 let gpu: GpuRenderer
 try {
-  gpu = await GpuRenderer.create(hud.canvas, (message) => showStatus(`GPU device lost: ${message}`, true))
+  gpu = await GpuRenderer.create(hud.canvas, (message) =>
+    showStatus(`GPU device lost: ${message}`, true),
+  )
 } catch (error) {
   console.error(error)
   showStatus(error instanceof Error ? error.message : String(error), true)
@@ -75,7 +82,8 @@ let cad: CadModel | null = null
 const MB = 2 ** 20
 loadCadModel(CAD_URL, cadSettings, cadStats, gpu.store, ({ phase, loaded, total }) => {
   if (phase === 'metadata') showStatus('Loading CAD metadata…')
-  else if (phase === 'hierarchy') showStatus(`Loading hierarchy… ${(loaded / MB).toFixed(0)} / ${(total / MB).toFixed(0)} MB`)
+  else if (phase === 'hierarchy')
+    showStatus(`Loading hierarchy… ${(loaded / MB).toFixed(0)} / ${(total / MB).toFixed(0)} MB`)
 })
   .then((model) => {
     cad = model
@@ -108,7 +116,11 @@ const benchmark = new BenchmarkRunner({
 
 const topViewConfigRef: { current: { enabled: boolean } } = { current: { enabled: false } }
 const topCameraRef = { current: topCamera }
-const boxViewRef: { current: { view: BoxView; onTop: boolean } } = { current: { view: 'off', onTop: true } }
+const boxViewRef: { current: { view: BoxView; onTop: boolean } } = {
+  current: { view: 'off', onTop: true },
+}
+/** Depth pyramid level shown over the main view; -1 for off. */
+const pyramidViewRef: { current: { mip: number } } = { current: { mip: -1 } }
 const minimapFrame = document.querySelector<HTMLDivElement>('#minimap-frame')
 
 const levaHost = document.querySelector<HTMLDivElement>('#leva-host') ?? document.body
@@ -119,6 +131,7 @@ levaRoot.render(
     topCameraRef={topCameraRef}
     topViewConfigRef={topViewConfigRef}
     boxViewRef={boxViewRef}
+    pyramidViewRef={pyramidViewRef}
     cadSettings={cadSettings}
     cadStats={cadStats}
   />,
@@ -144,10 +157,13 @@ const render = () => {
     camera,
     minimapCamera: minimapEnabled ? topCamera : null,
     frustumCulling: usesFrustum(cullingConfig.mode),
+    occlusionCulling: usesOcclusion(cullingConfig.mode),
     freezeCulling: cullingConfig.freeze,
     // Off during benchmark runs, like the minimap, so the overlay never skews the numbers.
     boxView: benchmark.active ? 'off' : boxViewRef.current.view,
     boxesOnTop: boxViewRef.current.onTop,
+    pyramidMip:
+      benchmark.active || pyramidViewRef.current.mip < 0 ? null : pyramidViewRef.current.mip,
   })
   perf.markMainDone()
 

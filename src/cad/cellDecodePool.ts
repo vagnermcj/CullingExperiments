@@ -18,7 +18,8 @@ export class CellDecodePool {
     try {
       for (let i = 0; i < size; i++) {
         const worker = new DecodeWorker()
-        worker.onmessage = (e: MessageEvent<{ id: number; cell?: DecodedCell; error?: string }>) => this.settle(i, e.data)
+        worker.onmessage = (e: MessageEvent<{ id: number; cell?: DecodedCell; error?: string }>) =>
+          this.settle(i, e.data)
         worker.onerror = () => this.fail()
         this.workers.push({ worker, busy: 0 })
       }
@@ -31,7 +32,8 @@ export class CellDecodePool {
   decode(buf: ArrayBuffer): Promise<DecodedCell> {
     if (this.workers.length === 0) return MeshoptDecoder.ready.then(() => decodeCell(buf))
     let slot = 0
-    for (let i = 1; i < this.workers.length; i++) if (this.workers[i].busy < this.workers[slot].busy) slot = i
+    for (let i = 1; i < this.workers.length; i++)
+      if (this.workers[i].busy < this.workers[slot].busy) slot = i
     const id = this.nextId++
     this.workers[slot].busy++
     return new Promise<DecodedCell>((resolve, reject) => {

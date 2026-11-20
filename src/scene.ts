@@ -38,7 +38,11 @@ export const frameModel = ({ camera, topCamera }: Cameras, bounds: THREE.Box3): 
   const center = bounds.getCenter(new THREE.Vector3())
   const longest = Math.max(size.x, size.y, size.z)
 
-  camera.position.set(center.x, center.y + size.y * 0.5 + longest * 0.15, bounds.max.z + longest * 0.6)
+  camera.position.set(
+    center.x,
+    center.y + size.y * 0.5 + longest * 0.15,
+    bounds.max.z + longest * 0.6,
+  )
   camera.lookAt(center)
   camera.far = Math.max(longest * 6, 500)
   camera.updateProjectionMatrix()

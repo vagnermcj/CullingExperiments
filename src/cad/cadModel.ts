@@ -2,7 +2,15 @@ import * as THREE from 'three'
 import { CellDecodePool } from './cellDecodePool'
 import { beginFrame, isCellVisible } from './cullingHooks'
 import { Hierarchy, type TierRange } from './hierarchy'
-import type { CadLoadProgress, CadMetadata, CadSettings, CadStats, CellSink, DecodedCell, GeometryTier } from './types'
+import type {
+  CadLoadProgress,
+  CadMetadata,
+  CadSettings,
+  CadStats,
+  CellSink,
+  DecodedCell,
+  GeometryTier,
+} from './types'
 
 const MAX_CONCURRENT_FETCHES = 6
 const ABANDON_MS = 2000
@@ -123,8 +131,16 @@ class MaxHeap {
 const median3 = (x: number, y: number, z: number) =>
   x <= y ? (y <= z ? y : x <= z ? z : x) : x <= z ? x : y <= z ? z : y
 
-const fetchRange = async (url: string, offset: number, size: number, signal: AbortSignal): Promise<ArrayBuffer> => {
-  const res = await fetch(url, { headers: { Range: `bytes=${offset}-${offset + size - 1}` }, signal })
+const fetchRange = async (
+  url: string,
+  offset: number,
+  size: number,
+  signal: AbortSignal,
+): Promise<ArrayBuffer> => {
+  const res = await fetch(url, {
+    headers: { Range: `bytes=${offset}-${offset + size - 1}` },
+    signal,
+  })
   // A server that ignores Range answers 200 with the whole multi-GB file; refuse it.
   if (res.status !== 206) {
     void res.body?.cancel()
@@ -140,7 +156,9 @@ const fetchWithProgress = async (
 ): Promise<ArrayBuffer> => {
   const res = await fetch(url)
   if (!res.ok || !res.body) throw new Error(`${url}: HTTP ${res.status}`)
-  let buffer = new Uint8Array(expectedBytes > 0 ? expectedBytes : Number(res.headers.get('content-length')) || 1 << 20)
+  let buffer = new Uint8Array(
+    expectedBytes > 0 ? expectedBytes : Number(res.headers.get('content-length')) || 1 << 20,
+  )
   let loaded = 0
   const reader = res.body.getReader()
   for (;;) {
@@ -192,7 +210,14 @@ export class CadModel {
   private residentTriangles = 0
   private residentCells = 0
 
-  constructor(metadata: CadMetadata, hierarchy: Hierarchy, baseUrl: string, settings: CadSettings, stats: CadStats, sink: CellSink) {
+  constructor(
+    metadata: CadMetadata,
+    hierarchy: Hierarchy,
+    baseUrl: string,
+    settings: CadSettings,
+    stats: CadStats,
+    sink: CellSink,
+  ) {
     this.metadata = metadata
     this.sink = sink
     this.hierarchy = hierarchy
@@ -204,7 +229,11 @@ export class CadModel {
       lod1: zone('lod') ? `${baseUrl}/${zone('lod')!.url}` : null,
       lod2: zone('lod2') ? `${baseUrl}/${zone('lod2')!.url}` : null,
     }
-    this.tierRatio = { raw: 1, lod1: zone('lod')?.triangleRatio ?? 0.35, lod2: zone('lod2')?.triangleRatio ?? 0.12 }
+    this.tierRatio = {
+      raw: 1,
+      lod1: zone('lod')?.triangleRatio ?? 0.35,
+      lod2: zone('lod2')?.triangleRatio ?? 0.12,
+    }
     const core = metadata.coreBoundingBox ?? metadata.boundingBox
     this.coreBounds = new THREE.Box3(new THREE.Vector3(...core.min), new THREE.Vector3(...core.max))
     stats.datasetTriangles = metadata.triangleCount
@@ -226,7 +255,9 @@ export class CadModel {
   }
 
   private tierAvailable(index: number, tier: GeometryTier): boolean {
-    return this.urls[tier] !== null && this.hierarchy.tierRange(index, tier, this.scratchRange).size > 0
+    return (
+      this.urls[tier] !== null && this.hierarchy.tierRange(index, tier, this.scratchRange).size > 0
+    )
   }
 
   /** The coarsest tier this cell ships that is no coarser than `preferred`; cells missing a tier use the next finer one. */
@@ -237,7 +268,12 @@ export class CadModel {
   }
 
   /** Projected size in pixels: median half-extent of the box plus a proximity term, over distance. */
-  private screenSize(index: number, camera: THREE.PerspectiveCamera, angular: number, proximity: number): number {
+  private screenSize(
+    index: number,
+    camera: THREE.PerspectiveCamera,
+    angular: number,
+    proximity: number,
+  ): number {
     const box = this.hierarchy.readBox(index, this.scratchBox)
     const sx = box.max.x - box.min.x
     const sy = box.max.y - box.min.y
@@ -361,7 +397,13 @@ export class CadModel {
     const abort = new AbortController()
     state.abort = abort
     state.loading = state.wanted
-    this.pending.push({ state, tier: state.wanted, offset: range.offset, size: range.size, signal: abort.signal })
+    this.pending.push({
+      state,
+      tier: state.wanted,
+      offset: range.offset,
+      size: range.size,
+      signal: abort.signal,
+    })
     this.pump()
   }
 
@@ -396,9 +438,11 @@ export class CadModel {
     } catch (error) {
       if (!signal.aborted) {
         state.failures++
-        state.retryAt = performance.now() + Math.min(RETRY_BASE_MS * 2 ** (state.failures - 1), RETRY_MAX_MS)
+        state.retryAt =
+          performance.now() + Math.min(RETRY_BASE_MS * 2 ** (state.failures - 1), RETRY_MAX_MS)
         this.failed.add(state)
-        if (state.failures <= 2) console.warn(`[CadModel] cell ${state.index} (${tier}) failed:`, error)
+        if (state.failures <= 2)
+          console.warn(`[CadModel] cell ${state.index} (${tier}) failed:`, error)
       }
     } finally {
       this.activeFetches--
@@ -419,7 +463,11 @@ export class CadModel {
     state.slot = slot
     state.tier = tier
     state.triangles = cell.indices.length / 3
-    state.bytes = cell.positions.byteLength + cell.normals.byteLength + cell.colors.byteLength + cell.indices.byteLength
+    state.bytes =
+      cell.positions.byteLength +
+      cell.normals.byteLength +
+      cell.colors.byteLength +
+      cell.indices.byteLength
     state.failures = 0
     state.retryAt = 0
     this.failed.delete(state)
@@ -448,7 +496,8 @@ export class CadModel {
     const cap = this.settings.maxResidentMB * MB
     if (this.residentBytes <= cap) return
     const candidates: CellState[] = []
-    for (const state of this.states.values()) if (state.slot >= 0 && state.selectedFrame !== frame) candidates.push(state)
+    for (const state of this.states.values())
+      if (state.slot >= 0 && state.selectedFrame !== frame) candidates.push(state)
     candidates.sort((a, b) => a.selectedFrame - b.selectedFrame)
     for (const state of candidates) {
       if (this.residentBytes <= cap) break
@@ -500,17 +549,23 @@ export const loadCadModel = async (
 ): Promise<CadModel> => {
   onProgress({ phase: 'metadata', loaded: 0, total: 0 })
   const res = await fetch(`${baseUrl}/metadata.json`, { cache: 'no-cache' })
-  if (!res.ok) throw new Error(`CAD dataset not found: ${baseUrl}/metadata.json (HTTP ${res.status})`)
+  if (!res.ok)
+    throw new Error(`CAD dataset not found: ${baseUrl}/metadata.json (HTTP ${res.status})`)
   const metadata = (await res.json()) as CadMetadata
   if (metadata.geometry?.format !== 'cell-chunks-v2.2-quantized') {
     throw new Error(`Unsupported geometry format: ${metadata.geometry?.format}`)
   }
 
-  const expected = metadata.hierarchy.recordSize ? metadata.nodeCount * metadata.hierarchy.recordSize : 0
+  const expected = metadata.hierarchy.recordSize
+    ? metadata.nodeCount * metadata.hierarchy.recordSize
+    : 0
   const buffer = await fetchWithProgress(`${baseUrl}/hierarchy.bin`, expected, (loaded, total) =>
     onProgress({ phase: 'hierarchy', loaded, total }),
   )
-  const hierarchy = new Hierarchy(buffer, metadata.hierarchy.recordSize ?? guessRecordSize(buffer.byteLength))
+  const hierarchy = new Hierarchy(
+    buffer,
+    metadata.hierarchy.recordSize ?? guessRecordSize(buffer.byteLength),
+  )
 
   onProgress({ phase: 'ready', loaded: 1, total: 1 })
   return new CadModel(metadata, hierarchy, baseUrl, settings, stats, sink)

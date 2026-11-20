@@ -35,12 +35,24 @@ export class CellStore implements CellSink {
 
   constructor(device: GPUDevice) {
     this.device = device
-    this.boxes = device.createBuffer({ label: 'cell boxes', size: MAX_SLOTS * 32, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST })
-    this.selectedBuffer = device.createBuffer({ label: 'cell selected', size: MAX_SLOTS * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST })
+    this.boxes = device.createBuffer({
+      label: 'cell boxes',
+      size: MAX_SLOTS * 32,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+    })
+    this.selectedBuffer = device.createBuffer({
+      label: 'cell selected',
+      size: MAX_SLOTS * 4,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+    })
     this.args = device.createBuffer({
       label: 'cell draw args',
       size: MAX_SLOTS * ARGS_BYTES,
-      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
+      usage:
+        GPUBufferUsage.STORAGE |
+        GPUBufferUsage.INDIRECT |
+        GPUBufferUsage.COPY_DST |
+        GPUBufferUsage.COPY_SRC,
     })
   }
 
@@ -63,7 +75,11 @@ export class CellStore implements CellSink {
 
     const { device } = this
     const upload = (data: ArrayBufferView<ArrayBuffer>, usage: number, label: string) => {
-      const buffer = device.createBuffer({ label: `cell ${slot} ${label}`, size: data.byteLength, usage: usage | GPUBufferUsage.COPY_DST })
+      const buffer = device.createBuffer({
+        label: `cell ${slot} ${label}`,
+        size: data.byteLength,
+        usage: usage | GPUBufferUsage.COPY_DST,
+      })
       device.queue.writeBuffer(buffer, 0, data)
       return buffer
     }
@@ -73,7 +89,11 @@ export class CellStore implements CellSink {
       color: upload(cell.colors, GPUBufferUsage.VERTEX, 'color'),
       index: upload(cell.indices, GPUBufferUsage.INDEX, 'index'),
       indexCount: cell.indices.length,
-      bytes: cell.positions.byteLength + cell.normals.byteLength + cell.colors.byteLength + cell.indices.byteLength,
+      bytes:
+        cell.positions.byteLength +
+        cell.normals.byteLength +
+        cell.colors.byteLength +
+        cell.indices.byteLength,
     }
     this.slots[slot] = stored
     this.totalBytes += stored.bytes
@@ -81,7 +101,11 @@ export class CellStore implements CellSink {
     const [x0, y0, z0, x1, y1, z1] = cell.box
     this.boxCpu.set([x0, y0, z0, 0, x1, y1, z1, 0], slot * 8)
     device.queue.writeBuffer(this.boxes, slot * 32, this.boxCpu, slot * 8, 8)
-    device.queue.writeBuffer(this.args, slot * ARGS_BYTES, new Uint32Array([stored.indexCount, 0, 0, 0, 0]))
+    device.queue.writeBuffer(
+      this.args,
+      slot * ARGS_BYTES,
+      new Uint32Array([stored.indexCount, 0, 0, 0, 0]),
+    )
     this.selectedCpu[slot] = 0
     this.dirty = true
     return slot
@@ -113,7 +137,13 @@ export class CellStore implements CellSink {
   /** Sends the selection flags to the GPU; call once per frame before culling. */
   flush(): void {
     if (!this.dirty) return
-    this.device.queue.writeBuffer(this.selectedBuffer, 0, this.selectedCpu, 0, Math.max(1, this.used))
+    this.device.queue.writeBuffer(
+      this.selectedBuffer,
+      0,
+      this.selectedCpu,
+      0,
+      Math.max(1, this.used),
+    )
     this.dirty = false
   }
 }

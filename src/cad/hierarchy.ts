@@ -21,7 +21,8 @@ export interface TierRange {
   size: number
 }
 
-const u64 = (view: DataView, at: number) => view.getUint32(at, true) + view.getUint32(at + 4, true) * 4294967296
+const u64 = (view: DataView, at: number) =>
+  view.getUint32(at, true) + view.getUint32(at + 4, true) * 4294967296
 
 export class Hierarchy {
   readonly count: number
@@ -75,7 +76,11 @@ export class Hierarchy {
     const at = index * this.recordSize + 22
     const v = this.view
     out.min.set(v.getFloat32(at, true), v.getFloat32(at + 4, true), v.getFloat32(at + 8, true))
-    out.max.set(v.getFloat32(at + 12, true), v.getFloat32(at + 16, true), v.getFloat32(at + 20, true))
+    out.max.set(
+      v.getFloat32(at + 12, true),
+      v.getFloat32(at + 16, true),
+      v.getFloat32(at + 20, true),
+    )
     return out
   }
 

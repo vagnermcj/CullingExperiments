@@ -26,6 +26,7 @@ export interface PerfSnapshot {
   drawCalls: number
   triangles: number
   selectedDraws: number
+  occludedDraws: number
   issuedDraws: number
   // Memory
   gpuTotalBytes: number
@@ -45,6 +46,7 @@ export const createEmptySnapshot = (): PerfSnapshot => ({
   drawCalls: 0,
   triangles: 0,
   selectedDraws: 0,
+  occludedDraws: 0,
   issuedDraws: 0,
   gpuTotalBytes: 0,
   jsHeapBytes: null,
@@ -64,7 +66,12 @@ export interface GpuStatsSource {
 export class PerformanceMonitor {
   readonly snapshot: PerfSnapshot = createEmptySnapshot()
   /** Unsmoothed values of the last finished frame; GPU values lag by a frame or two (async readback) and are null without timestamp queries. */
-  readonly latest: { updateMs: number; renderMs: number; gpuMs: number | null; cullMs: number | null } = {
+  readonly latest: {
+    updateMs: number
+    renderMs: number
+    gpuMs: number | null
+    cullMs: number | null
+  } = {
     updateMs: 0,
     renderMs: 0,
     gpuMs: null,
@@ -117,7 +124,8 @@ export class PerformanceMonitor {
     const s = this.snapshot
     const g = this.source.stats
 
-    const smooth = (prev: number, next: number) => (prev === 0 ? next : prev + (next - prev) * EMA_ALPHA)
+    const smooth = (prev: number, next: number) =>
+      prev === 0 ? next : prev + (next - prev) * EMA_ALPHA
     this.latest.updateMs = this.updateDone - this.frameStart
     this.latest.renderMs = this.mainDone - this.updateDone
     s.updateMs = smooth(s.updateMs, this.latest.updateMs)
@@ -131,6 +139,7 @@ export class PerformanceMonitor {
     s.drawCalls = g.visibleDraws
     s.triangles = g.visibleTriangles
     s.selectedDraws = g.selectedDraws
+    s.occludedDraws = g.occludedDraws
     s.issuedDraws = g.issuedDraws
     s.gpuTotalBytes = g.gpuBytes
 

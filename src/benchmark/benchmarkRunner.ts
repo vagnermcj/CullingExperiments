@@ -47,10 +47,13 @@ const emptyLive = (): LiveStats => ({
   pendingLoads: 0,
 })
 
-const mean = (values: number[]) => (values.length === 0 ? 0 : values.reduce((a, b) => a + b, 0) / values.length)
+const mean = (values: number[]) =>
+  values.length === 0 ? 0 : values.reduce((a, b) => a + b, 0) / values.length
 
 const percentile = (sortedAscending: number[], fraction: number) =>
-  sortedAscending.length === 0 ? 0 : sortedAscending[Math.floor(fraction * (sortedAscending.length - 1))]
+  sortedAscending.length === 0
+    ? 0
+    : sortedAscending[Math.floor(fraction * (sortedAscending.length - 1))]
 
 /** FPS of the average of the worst `fraction` of frames. */
 const lowFps = (sortedDescending: number[], fraction: number) => {
@@ -120,7 +123,12 @@ export class BenchmarkRunner {
     this.samples = []
     this.phaseTime = 0
     this.stableTime = 0
-    this.enter(options.warmup ? 'warmup' : 'settle', { options, result: null, notice: '', elapsed: 0 })
+    this.enter(options.warmup ? 'warmup' : 'settle', {
+      options,
+      result: null,
+      notice: '',
+      elapsed: 0,
+    })
     return true
   }
 
@@ -149,8 +157,12 @@ export class BenchmarkRunner {
       case 'settle': {
         this.pose(0)
         this.stableTime = this.deps.cadStats.pendingLoads === 0 ? this.stableTime + step : 0
-        if (this.stableTime >= SETTLE_STABLE_SEC || this.phaseTime >= SETTLE_MAX_SEC) this.enter('running', { elapsed: 0 })
-        else this.progress(Math.max(this.stableTime / SETTLE_STABLE_SEC, this.phaseTime / SETTLE_MAX_SEC))
+        if (this.stableTime >= SETTLE_STABLE_SEC || this.phaseTime >= SETTLE_MAX_SEC)
+          this.enter('running', { elapsed: 0 })
+        else
+          this.progress(
+            Math.max(this.stableTime / SETTLE_STABLE_SEC, this.phaseTime / SETTLE_MAX_SEC),
+          )
         break
       }
       case 'running': {
@@ -300,7 +312,8 @@ export class BenchmarkRunner {
       maxPendingLoads: Math.max(...col((s) => s.pendingLoads)),
     }
 
-    const scenarioLabel = CULLING_MODES.find((m) => m.id === options.scenario)?.label ?? options.scenario
+    const scenarioLabel =
+      CULLING_MODES.find((m) => m.id === options.scenario)?.label ?? options.scenario
     const createdAt = Date.now()
     return {
       id: `${createdAt.toString(36)}-${Math.random().toString(36).slice(2, 7)}`,

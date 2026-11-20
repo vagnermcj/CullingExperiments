@@ -1,8 +1,11 @@
 import * as THREE from 'three'
 import cullShader from './shaders/cull.wgsl?raw'
+import hizShader from './shaders/hiz.wgsl?raw'
+import hizDebugShader from './shaders/hizDebug.wgsl?raw'
 import overlayShader from './shaders/overlay.wgsl?raw'
 import renderShader from './shaders/render.wgsl?raw'
 import { ARGS_BYTES, CellStore } from './cellStore'
+import { DepthPyramid } from './depthPyramid'
 import { requestGpuDevice } from './device'
 import { PLANE_COUNT, extractFrustumPlanes } from './frustum'
 
@@ -13,8 +16,12 @@ const DEPTH_FORMAT: GPUTextureFormat = 'depth32float'
 const WORKGROUP_SIZE = 64
 const BACKGROUND = 0x9cc7e8
 const FRAME_FLOATS = 36
-const CULL_UNIFORM_BYTES = 112
+// 6 planes (96 bytes), cellCount, flags, near, pad, then viewProj at byte 112
+const CULL_UNIFORM_BYTES = 176
+const CULL_NEAR_FLOAT = 26
+const CULL_VIEW_PROJ_FLOAT = 28
 const FLAG_FRUSTUM = 1
+const FLAG_OCCLUSION = 2
 // counters (4 x u32) then 4 timestamps (4 x u64)
 const STAGING_COUNT = 3
 const STAGING_BYTES = 48
@@ -24,6 +31,8 @@ export interface GpuFrameStats {
   selectedDraws: number
   visibleDraws: number
   visibleTriangles: number
+  /** Cells that passed the frustum test and were then rejected by the occlusion test. */
+  occludedDraws: number
   /** Indirect draws encoded this frame: every resident cell, culled or not. */
   issuedDraws: number
   /** GPU milliseconds; null without `timestamp-query`. */
@@ -45,15 +54,25 @@ export interface RenderRequest {
   minimapCamera: THREE.OrthographicCamera | null
   /** Run the frustum test in the culling shader. */
   frustumCulling: boolean
+  /** Run the Hi-Z occlusion test in the culling shader (off while the culling frustum is frozen). */
+  occlusionCulling: boolean
   /** Keep culling against the last frustum while the camera moves freely. */
   freezeCulling: boolean
   /** Bounding-box overlay, coloured by the culling result (green drawn, red culled, grey not selected). */
   boxView: BoxView
   /** Draw the boxes through the geometry instead of depth-testing them against it. */
   boxesOnTop: boolean
+  /** Debug: build the depth pyramid and show this level of it over the main view; null for off. */
+  pyramidMip: number | null
 }
 
-const sRgb = (hex: number) => [((hex >> 16) & 255) / 255, ((hex >> 8) & 255) / 255, (hex & 255) / 255]
+type ShaderModules = Record<'render' | 'overlay' | 'cull' | 'hiz' | 'hizDebug', GPUShaderModule>
+
+const sRgb = (hex: number) => [
+  ((hex >> 16) & 255) / 255,
+  ((hex >> 8) & 255) / 255,
+  (hex & 255) / 255,
+]
 
 /** Frame uniform: viewProj, then the lighting constants of the old three.js scene. */
 const createFrameUniform = (): Float32Array => {
@@ -75,7 +94,9 @@ const checkShader = async (module: GPUShaderModule, name: string): Promise<void>
   const info = await module.getCompilationInfo()
   const errors = info.messages.filter((m) => m.type === 'error')
   if (errors.length > 0) {
-    throw new Error(`${name} failed to compile:\n${errors.map((m) => `  line ${m.lineNum}: ${m.message}`).join('\n')}`)
+    throw new Error(
+      `${name} failed to compile:\n${errors.map((m) => `  line ${m.lineNum}: ${m.message}`).join('\n')}`,
+    )
   }
 }
 
@@ -85,6 +106,7 @@ export class GpuRenderer {
     selectedDraws: 0,
     visibleDraws: 0,
     visibleTriangles: 0,
+    occludedDraws: 0,
     issuedDraws: 0,
     gpuMs: null,
     cullMs: null,
@@ -109,13 +131,16 @@ export class GpuRenderer {
   private readonly boxBindGroup: GPUBindGroup
   private readonly boxParams = new Uint32Array(4)
   private readonly cullPipeline: GPUComputePipeline
+  private readonly pyramid: DepthPyramid
 
   private readonly mainUniform: GPUBuffer
   private readonly minimapUniform: GPUBuffer
   private readonly mainBindGroup: GPUBindGroup
   private readonly minimapBindGroup: GPUBindGroup
   private readonly cullUniform: GPUBuffer
-  private readonly cullBindGroup: GPUBindGroup
+  private readonly cullLayout: GPUBindGroupLayout
+  /** Holds a view of the depth pyramid, so it is recreated with it on resize. */
+  private cullBindGroup: GPUBindGroup | null = null
   private readonly counters: GPUBuffer
   private readonly lineBuffer: GPUBuffer
 
@@ -137,12 +162,21 @@ export class GpuRenderer {
   private readonly planes = new Float32Array(PLANE_COUNT * 4)
   private readonly frustumLines = new Float32Array(24 * 3)
   private haveCullFrustum = false
+  /** The pyramid was built last frame from the current depth buffer, so the occlusion test may read it. */
+  private pyramidReady = false
   private readonly viewProjection = new THREE.Matrix4()
   private readonly corner = new THREE.Vector3()
 
-  private pendingCapture: ((image: { width: number; height: number; bgra: Uint8Array }) => void) | null = null
+  private pendingCapture:
+    | ((image: { width: number; height: number; bgra: Uint8Array }) => void)
+    | null = null
 
-  private constructor(canvas: HTMLCanvasElement, device: GPUDevice, timestamps: boolean, modules: Record<'render' | 'overlay' | 'cull', GPUShaderModule>) {
+  private constructor(
+    canvas: HTMLCanvasElement,
+    device: GPUDevice,
+    timestamps: boolean,
+    modules: ShaderModules,
+  ) {
     this.canvas = canvas
     this.device = device
     this.timestamps = timestamps
@@ -151,16 +185,32 @@ export class GpuRenderer {
     this.context = context
     this.format = navigator.gpu.getPreferredCanvasFormat()
     // COPY_SRC lets tests read the final image back.
-    context.configure({ device, format: this.format, alphaMode: 'opaque', usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC })
+    context.configure({
+      device,
+      format: this.format,
+      alphaMode: 'opaque',
+      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC,
+    })
 
     this.store = new CellStore(device)
+    this.pyramid = new DepthPyramid(device, modules.hiz, modules.hizDebug, this.format)
 
     const uniformLayout = device.createBindGroupLayout({
-      entries: [{ binding: 0, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } }],
+      entries: [
+        {
+          binding: 0,
+          visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
+          buffer: { type: 'uniform' },
+        },
+      ],
     })
     const pipelineLayout = device.createPipelineLayout({ bindGroupLayouts: [uniformLayout] })
     const target: GPUColorTargetState = { format: this.format }
-    const overlayDepth: GPUDepthStencilState = { format: DEPTH_FORMAT, depthWriteEnabled: false, depthCompare: 'always' }
+    const overlayDepth: GPUDepthStencilState = {
+      format: DEPTH_FORMAT,
+      depthWriteEnabled: false,
+      depthCompare: 'always',
+    }
 
     this.renderPipeline = device.createRenderPipeline({
       label: 'cells',
@@ -192,7 +242,9 @@ export class GpuRenderer {
       vertex: {
         module: modules.overlay,
         entryPoint: 'lineVs',
-        buffers: [{ arrayStride: 12, attributes: [{ shaderLocation: 0, offset: 0, format: 'float32x3' }] }],
+        buffers: [
+          { arrayStride: 12, attributes: [{ shaderLocation: 0, offset: 0, format: 'float32x3' }] },
+        ],
       },
       fragment: { module: modules.overlay, entryPoint: 'lineFs', targets: [target] },
       primitive: { topology: 'line-list' },
@@ -215,30 +267,67 @@ export class GpuRenderer {
         primitive: { topology: 'line-list' },
         depthStencil,
       })
-    this.boxPipeline = boxPipeline('cell boxes', { format: DEPTH_FORMAT, depthWriteEnabled: false, depthCompare: 'less-equal' })
+    this.boxPipeline = boxPipeline('cell boxes', {
+      format: DEPTH_FORMAT,
+      depthWriteEnabled: false,
+      depthCompare: 'less-equal',
+    })
     this.boxOnTopPipeline = boxPipeline('cell boxes on top', overlayDepth)
-    this.cullPipeline = device.createComputePipeline({ label: 'frustum cull', layout: 'auto', compute: { module: modules.cull, entryPoint: 'main' } })
-
-    const uniformBuffer = (label: string) =>
-      device.createBuffer({ label, size: FRAME_FLOATS * 4, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST })
-    this.mainUniform = uniformBuffer('main frame')
-    this.minimapUniform = uniformBuffer('minimap frame')
-    this.mainBindGroup = device.createBindGroup({ layout: uniformLayout, entries: [{ binding: 0, resource: { buffer: this.mainUniform } }] })
-    this.minimapBindGroup = device.createBindGroup({ layout: uniformLayout, entries: [{ binding: 0, resource: { buffer: this.minimapUniform } }] })
-
-    this.cullUniform = device.createBuffer({ label: 'cull params', size: CULL_UNIFORM_BYTES, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST })
-    this.counters = device.createBuffer({ label: 'cull counters', size: 16, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST })
-    this.cullBindGroup = device.createBindGroup({
-      layout: this.cullPipeline.getBindGroupLayout(0),
+    // Explicit layout: the pyramid is r32float (not filterable), and an automatic layout would drop the
+    // binding while the shader does not read it yet.
+    this.cullLayout = device.createBindGroupLayout({
+      label: 'cull',
       entries: [
-        { binding: 0, resource: { buffer: this.cullUniform } },
-        { binding: 1, resource: { buffer: this.store.boxes } },
-        { binding: 2, resource: { buffer: this.store.selectedBuffer } },
-        { binding: 3, resource: { buffer: this.store.args } },
-        { binding: 4, resource: { buffer: this.counters } },
+        { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform' } },
+        { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' } },
+        { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' } },
+        { binding: 3, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
+        { binding: 4, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
+        {
+          binding: 5,
+          visibility: GPUShaderStage.COMPUTE,
+          texture: { sampleType: 'unfilterable-float' },
+        },
       ],
     })
-    this.boxUniform = device.createBuffer({ label: 'box params', size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST })
+    this.cullPipeline = device.createComputePipeline({
+      label: 'cull',
+      layout: device.createPipelineLayout({ bindGroupLayouts: [this.cullLayout] }),
+      compute: { module: modules.cull, entryPoint: 'main' },
+    })
+
+    const uniformBuffer = (label: string) =>
+      device.createBuffer({
+        label,
+        size: FRAME_FLOATS * 4,
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+      })
+    this.mainUniform = uniformBuffer('main frame')
+    this.minimapUniform = uniformBuffer('minimap frame')
+    this.mainBindGroup = device.createBindGroup({
+      layout: uniformLayout,
+      entries: [{ binding: 0, resource: { buffer: this.mainUniform } }],
+    })
+    this.minimapBindGroup = device.createBindGroup({
+      layout: uniformLayout,
+      entries: [{ binding: 0, resource: { buffer: this.minimapUniform } }],
+    })
+
+    this.cullUniform = device.createBuffer({
+      label: 'cull params',
+      size: CULL_UNIFORM_BYTES,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    })
+    this.counters = device.createBuffer({
+      label: 'cull counters',
+      size: 16,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST,
+    })
+    this.boxUniform = device.createBuffer({
+      label: 'box params',
+      size: 16,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    })
     this.boxBindGroup = device.createBindGroup({
       layout: boxLayout,
       entries: [
@@ -248,21 +337,50 @@ export class GpuRenderer {
         { binding: 3, resource: { buffer: this.boxUniform } },
       ],
     })
-    this.lineBuffer = device.createBuffer({ label: 'frustum lines', size: this.frustumLines.byteLength, usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST })
+    this.lineBuffer = device.createBuffer({
+      label: 'frustum lines',
+      size: this.frustumLines.byteLength,
+      usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+    })
 
     this.querySet = timestamps ? device.createQuerySet({ type: 'timestamp', count: 4 }) : null
-    this.resolveBuffer = timestamps ? device.createBuffer({ label: 'timestamps', size: 32, usage: GPUBufferUsage.QUERY_RESOLVE | GPUBufferUsage.COPY_SRC }) : null
+    this.resolveBuffer = timestamps
+      ? device.createBuffer({
+          label: 'timestamps',
+          size: 32,
+          usage: GPUBufferUsage.QUERY_RESOLVE | GPUBufferUsage.COPY_SRC,
+        })
+      : null
     for (let i = 0; i < STAGING_COUNT; i++) {
-      this.staging.push(device.createBuffer({ label: `readback ${i}`, size: STAGING_BYTES, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST }))
+      this.staging.push(
+        device.createBuffer({
+          label: `readback ${i}`,
+          size: STAGING_BYTES,
+          usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
+        }),
+      )
       this.stagingBusy.push(false)
     }
   }
 
-  static async create(canvas: HTMLCanvasElement, onLost: (message: string) => void): Promise<GpuRenderer> {
+  static async create(
+    canvas: HTMLCanvasElement,
+    onLost: (message: string) => void,
+  ): Promise<GpuRenderer> {
     const { device, timestamps } = await requestGpuDevice(onLost)
     const module = (code: string, label: string) => device.createShaderModule({ label, code })
-    const modules = { render: module(renderShader, 'render.wgsl'), overlay: module(overlayShader, 'overlay.wgsl'), cull: module(cullShader, 'cull.wgsl') }
-    await Promise.all([checkShader(modules.render, 'render.wgsl'), checkShader(modules.overlay, 'overlay.wgsl'), checkShader(modules.cull, 'cull.wgsl')])
+    const sources = {
+      render: renderShader,
+      overlay: overlayShader,
+      cull: cullShader,
+      hiz: hizShader,
+      hizDebug: hizDebugShader,
+    }
+    const names = Object.keys(sources) as (keyof typeof sources)[]
+    const modules = Object.fromEntries(
+      names.map((name) => [name, module(sources[name], `${name}.wgsl`)]),
+    ) as ShaderModules
+    await Promise.all(names.map((name) => checkShader(modules[name], `${name}.wgsl`)))
     return new GpuRenderer(canvas, device, timestamps, modules)
   }
 
@@ -283,12 +401,36 @@ export class GpuRenderer {
     this.minimapDepthTexture?.destroy()
     this.minimapDepthTexture = null
     this.depthTexture = this.createDepth('main depth')
+    this.pyramid.rebuild(this.depthTexture)
+    // A fresh pyramid is all zeros (everything at the near plane): not usable until it is built once.
+    this.pyramidReady = false
+    this.cullBindGroup = this.device.createBindGroup({
+      label: 'cull',
+      layout: this.cullLayout,
+      entries: [
+        { binding: 0, resource: { buffer: this.cullUniform } },
+        { binding: 1, resource: { buffer: this.store.boxes } },
+        { binding: 2, resource: { buffer: this.store.selectedBuffer } },
+        { binding: 3, resource: { buffer: this.store.args } },
+        { binding: 4, resource: { buffer: this.counters } },
+        { binding: 5, resource: this.pyramid.view },
+      ],
+    })
   }
 
   render(request: RenderRequest): void {
     const { device, store } = this
-    const { camera, minimapCamera, frustumCulling, freezeCulling, boxView, boxesOnTop } = request
-    if (!this.depthTexture) return
+    const {
+      camera,
+      minimapCamera,
+      frustumCulling,
+      occlusionCulling,
+      freezeCulling,
+      boxView,
+      boxesOnTop,
+      pyramidMip,
+    } = request
+    if (!this.depthTexture || !this.cullBindGroup) return
 
     // The culling frustum follows the camera unless frozen.
     this.viewProjection.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse)
@@ -303,17 +445,27 @@ export class GpuRenderer {
     const cellCount = store.highWater
     this.cullFloats.set(this.planes, 0)
     this.cullInts[24] = cellCount
-    this.cullInts[25] = frustumCulling ? FLAG_FRUSTUM : 0
+    // The pyramid comes from the live camera, so the occlusion test makes no sense against a frozen frustum.
+    const testOcclusion = occlusionCulling && !freezeCulling && this.pyramidReady
+    this.cullInts[25] = (frustumCulling ? FLAG_FRUSTUM : 0) | (testOcclusion ? FLAG_OCCLUSION : 0)
+    this.cullFloats[CULL_NEAR_FLOAT] = camera.near
+    this.cullFloats.set(this.viewProjection.elements, CULL_VIEW_PROJ_FLOAT)
     device.queue.writeBuffer(this.cullUniform, 0, this.cullParams)
     store.flush()
-    const boxPipeline = boxView === 'off' || cellCount === 0 ? null : boxesOnTop ? this.boxOnTopPipeline : this.boxPipeline
+    const boxPipeline =
+      boxView === 'off' || cellCount === 0
+        ? null
+        : boxesOnTop
+          ? this.boxOnTopPipeline
+          : this.boxPipeline
     if (boxPipeline && this.boxParams[0] !== BOX_VIEW_CODE[boxView]) {
       this.boxParams[0] = BOX_VIEW_CODE[boxView]
       device.queue.writeBuffer(this.boxUniform, 0, this.boxParams)
     }
 
     const room = (MINIMAP_SIZE + MINIMAP_MARGIN) * this.pixelRatio
-    const minimap = minimapCamera !== null && this.width > room && this.height > room ? minimapCamera : null
+    const minimap =
+      minimapCamera !== null && this.width > room && this.height > room ? minimapCamera : null
     if (minimap) {
       minimap.updateMatrixWorld()
       this.viewProjection.multiplyMatrices(minimap.projectionMatrix, minimap.matrixWorldInverse)
@@ -326,10 +478,13 @@ export class GpuRenderer {
     const staging = this.stagingBusy.indexOf(false)
 
     // 1. Reset the counters, 2. cull on the GPU: this is what decides which draws below do anything.
+    // The occlusion test reads the pyramid built at the end of the previous frame.
     encoder.clearBuffer(this.counters)
     const compute = encoder.beginComputePass({
-      label: 'frustum cull',
-      timestampWrites: this.querySet ? { querySet: this.querySet, beginningOfPassWriteIndex: 0, endOfPassWriteIndex: 1 } : undefined,
+      label: 'cull',
+      timestampWrites: this.querySet
+        ? { querySet: this.querySet, beginningOfPassWriteIndex: 0, endOfPassWriteIndex: 1 }
+        : undefined,
     })
     compute.setPipeline(this.cullPipeline)
     compute.setBindGroup(0, this.cullBindGroup)
@@ -339,13 +494,35 @@ export class GpuRenderer {
     // 3. Draw every resident cell with an indirect draw; culled ones have instanceCount 0.
     const main = encoder.beginRenderPass({
       label: 'main view',
-      colorAttachments: [{ view: target.createView(), clearValue: this.clearColor(), loadOp: 'clear', storeOp: 'store' }],
-      depthStencilAttachment: { view: this.depthTexture.createView(), depthClearValue: 1, depthLoadOp: 'clear', depthStoreOp: 'store' },
-      timestampWrites: this.querySet ? { querySet: this.querySet, beginningOfPassWriteIndex: 2, endOfPassWriteIndex: 3 } : undefined,
+      colorAttachments: [
+        {
+          view: target.createView(),
+          clearValue: this.clearColor(),
+          loadOp: 'clear',
+          storeOp: 'store',
+        },
+      ],
+      depthStencilAttachment: {
+        view: this.depthTexture.createView(),
+        depthClearValue: 1,
+        depthLoadOp: 'clear',
+        depthStoreOp: 'store',
+      },
+      timestampWrites: this.querySet
+        ? { querySet: this.querySet, beginningOfPassWriteIndex: 2, endOfPassWriteIndex: 3 }
+        : undefined,
     })
     const issued = this.drawCells(main, this.mainBindGroup)
     if (boxPipeline) this.drawBoxes(main, this.mainBindGroup, boxPipeline, cellCount)
     main.end()
+
+    // Depth pyramid from this frame's depth: next frame's occlusion test reads it.
+    const buildPyramid = occlusionCulling || pyramidMip !== null
+    if (buildPyramid) this.pyramid.encode(encoder)
+    this.pyramidReady = buildPyramid
+    if (pyramidMip !== null) {
+      this.pyramid.encodeDebugView(encoder, target, pyramidMip, camera.near, camera.far)
+    }
 
     // 4. The minimap shows the same culling results from above, plus the culling frustum.
     if (minimap) this.drawMinimap(encoder, target, boxPipeline, cellCount)
@@ -365,13 +542,19 @@ export class GpuRenderer {
 
     this.stats.issuedDraws = issued
     this.stats.cells = issued
-    this.stats.gpuBytes = store.bytes + this.width * this.height * 4 * (this.minimapDepthTexture ? 2 : 1)
+    this.stats.gpuBytes =
+      store.bytes +
+      this.width * this.height * 4 * (this.minimapDepthTexture ? 2 : 1) +
+      this.pyramid.bytes
   }
 
   /** Test utility: the draw arguments the culling shader wrote last frame (5 u32 per slot). */
   async debugReadArgs(): Promise<Uint32Array> {
     const size = Math.max(1, this.store.highWater) * ARGS_BYTES
-    const buffer = this.device.createBuffer({ size, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST })
+    const buffer = this.device.createBuffer({
+      size,
+      usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
+    })
     const encoder = this.device.createCommandEncoder()
     encoder.copyBufferToBuffer(this.store.args, 0, buffer, 0, size)
     this.device.queue.submit([encoder.finish()])
@@ -394,7 +577,12 @@ export class GpuRenderer {
   }
 
   private createDepth(label: string): GPUTexture {
-    return this.device.createTexture({ label, size: [this.width, this.height], format: DEPTH_FORMAT, usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING })
+    return this.device.createTexture({
+      label,
+      size: [this.width, this.height],
+      format: DEPTH_FORMAT,
+      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+    })
   }
 
   private drawCells(pass: GPURenderPassEncoder, bindGroup: GPUBindGroup): number {
@@ -416,14 +604,24 @@ export class GpuRenderer {
     return issued
   }
 
-  private drawBoxes(pass: GPURenderPassEncoder, bindGroup: GPUBindGroup, pipeline: GPURenderPipeline, cellCount: number): void {
+  private drawBoxes(
+    pass: GPURenderPassEncoder,
+    bindGroup: GPUBindGroup,
+    pipeline: GPURenderPipeline,
+    cellCount: number,
+  ): void {
     pass.setPipeline(pipeline)
     pass.setBindGroup(0, bindGroup)
     pass.setBindGroup(1, this.boxBindGroup)
     pass.draw(24, cellCount)
   }
 
-  private drawMinimap(encoder: GPUCommandEncoder, target: GPUTexture, boxPipeline: GPURenderPipeline | null, cellCount: number): void {
+  private drawMinimap(
+    encoder: GPUCommandEncoder,
+    target: GPUTexture,
+    boxPipeline: GPURenderPipeline | null,
+    cellCount: number,
+  ): void {
     this.minimapDepthTexture ??= this.createDepth('minimap depth')
     const size = Math.round(MINIMAP_SIZE * this.pixelRatio)
     const x = this.width - size - Math.round(MINIMAP_MARGIN * this.pixelRatio)
@@ -433,7 +631,12 @@ export class GpuRenderer {
     const pass = encoder.beginRenderPass({
       label: 'minimap',
       colorAttachments: [{ view: target.createView(), loadOp: 'load', storeOp: 'store' }],
-      depthStencilAttachment: { view: this.minimapDepthTexture.createView(), depthClearValue: 1, depthLoadOp: 'clear', depthStoreOp: 'discard' },
+      depthStencilAttachment: {
+        view: this.minimapDepthTexture.createView(),
+        depthClearValue: 1,
+        depthLoadOp: 'clear',
+        depthStoreOp: 'discard',
+      },
     })
     pass.setViewport(x, y, size, size, 0, 1)
     pass.setScissorRect(x, y, size, size)
@@ -454,8 +657,19 @@ export class GpuRenderer {
   private updateFrustumLines(camera: THREE.PerspectiveCamera): void {
     const corners: THREE.Vector3[] = []
     for (const z of [0, 1]) {
-      for (const [x, y] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) {
-        corners.push(this.corner.set(x, y, z).clone().applyMatrix4(camera.projectionMatrixInverse).applyMatrix4(camera.matrixWorld))
+      for (const [x, y] of [
+        [-1, -1],
+        [1, -1],
+        [1, 1],
+        [-1, 1],
+      ]) {
+        corners.push(
+          this.corner
+            .set(x, y, z)
+            .clone()
+            .applyMatrix4(camera.projectionMatrixInverse)
+            .applyMatrix4(camera.matrixWorld),
+        )
       }
     }
     const edges = [0, 1, 1, 2, 2, 3, 3, 0, 4, 5, 5, 6, 6, 7, 7, 4, 0, 4, 1, 5, 2, 6, 3, 7]
@@ -468,8 +682,14 @@ export class GpuRenderer {
     this.pendingCapture = null
     if (!resolve) return
     const bytesPerRow = Math.ceil((this.width * 4) / 256) * 256
-    const buffer = this.device.createBuffer({ size: bytesPerRow * this.height, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST })
-    encoder.copyTextureToBuffer({ texture: target }, { buffer, bytesPerRow }, [this.width, this.height])
+    const buffer = this.device.createBuffer({
+      size: bytesPerRow * this.height,
+      usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
+    })
+    encoder.copyTextureToBuffer({ texture: target }, { buffer, bytesPerRow }, [
+      this.width,
+      this.height,
+    ])
     const { width, height } = this
     void this.device.queue.onSubmittedWorkDone().then(async () => {
       await buffer.mapAsync(GPUMapMode.READ)
@@ -493,9 +713,11 @@ export class GpuRenderer {
         s.selectedDraws = counts[0]
         s.visibleDraws = counts[1]
         s.visibleTriangles = counts[2]
+        s.occludedDraws = counts[3]
         if (this.querySet) {
           const t = new BigUint64Array(data, 16, 4)
-          const ms = (from: number, to: number) => (t[to] >= t[from] ? Number(t[to] - t[from]) / 1e6 : null)
+          const ms = (from: number, to: number) =>
+            t[to] >= t[from] ? Number(t[to] - t[from]) / 1e6 : null
           s.cullMs = ms(0, 1)
           s.renderMs = ms(2, 3)
           s.gpuMs = s.cullMs !== null && s.renderMs !== null ? s.cullMs + s.renderMs : null
